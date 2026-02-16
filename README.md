@@ -18,10 +18,10 @@ All sensitive services pinned to a single trusted node (`nyc`).
 - [Step 2: Initialize Swarm on nyc Leader](#step-2-initialize-swarm-on-nyc-leader)
 - [Step 3: Label the Trusted Node](#step-3-label-the-trusted-node)
 - [Step 4: Join Additional Manager Nodes](#step-4-join-additional-manager-nodes)
-- [Step 5: Set Up NFS Shared Storage](#step-5-set-up-nfs-shared-storage)
-- [Step 6: Configure Firewall](#step-6-configure-firewall)
+- [Step 5: Set Up NFS Shared Storage](#step-5-set-up-nfs-shared-storage-caprover-dashboard-ha)
+- [Step 6: Configure Firewall](#step-6-configure-firewall-run-on-all-nodes)
 - [Step 7: Deploy Docker Socket Proxy](#step-7-deploy-docker-socket-proxy)
-- [Step 8: Deploy OpenClaw Gateway](#step-8-deploy-openclaw-gateway)
+- [Step 8: Deploy OpenClaw Gateway](#step-8-deploy-openclaw-gateway-primary-service)
 - [Step 9: Deploy Egress Proxy (Squid)](#step-9-deploy-egress-proxy-squid)
 - [Step 10: Post-Deployment Configuration](#step-10-post-deployment-configuration)
 - [Step 11: Verification](#step-11-verification)
@@ -35,6 +35,8 @@ All sensitive services pinned to a single trusted node (`nyc`).
 
 #### 1.1 UFW + ufw-docker Setup (Run on **ALL** Nodes)
 
+> **WARNING**: The firewall rule below only allows SSH from localhost (127.0.0.1). If you are connected via remote SSH, you **will be locked out** when UFW is enabled. Either replace `127.0.0.1` with your admin IP, or ensure you have out-of-band console/IPMI/KVM access before running `ufw --force enable`. Step 6 will reset and reconfigure the firewall with your admin IP on port 9922.
+
 ```bash
 # 1. Install UFW
 sudo apt update
@@ -45,10 +47,7 @@ sudo wget -O /usr/local/bin/ufw-docker \
   https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
 sudo chmod +x /usr/local/bin/ufw-docker
 
-# 3. Install integration
-sudo ufw-docker install --confirm-license
-
-# 4. Initial configuration
+# 3. Initial configuration (ufw-docker is installed in Step 6 after full reset)
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow from 127.0.0.1 to any port 22 proto tcp   # temporary local SSH
@@ -92,11 +91,13 @@ docker swarm join-token manager
 
 #### Create Encrypted Overlay Network
 
-Create a dedicated encrypted overlay network for OpenClaw services. This prevents other Swarm services from sniffing Docker API traffic between the gateway and socket proxy.
+Create a dedicated encrypted overlay network for OpenClaw services. This encrypts all inter-service traffic (IPSEC) and isolates OpenClaw from other Swarm services.
 
 ```bash
-docker network create --driver overlay --opt encrypted --attachable openclaw-net
+docker network create --driver overlay --opt encrypted openclaw-net
 ```
+
+> **Note**: Do not use `--attachable` — that would allow standalone (`docker run`) containers to join this network, weakening isolation.
 
 ### Step 3: Label the Trusted Node
 ```bash
@@ -123,10 +124,11 @@ docker node ls
 apt install nfs-kernel-server -y
 mkdir -p /captain/data && chown nobody:nogroup /captain/data
 
-# IMPORTANT: Restrict to your Swarm subnet (replace with your actual CIDR)
-# Using root_squash to prevent remote root access
-echo "/captain/data <SWARM_SUBNET_CIDR>(rw,sync,no_subtree_check,root_squash)" > /etc/exports
-# Example: /captain/data 10.0.0.0/24(rw,sync,no_subtree_check,root_squash)
+# Restrict to your Swarm subnet (replace with your actual CIDR).
+# no_root_squash is required because CapRover's captain container runs as root
+# and needs root-level filesystem control over its data directory.
+echo "/captain/data <SWARM_SUBNET_CIDR>(rw,sync,no_subtree_check,no_root_squash)" > /etc/exports
+# Example: /captain/data 10.0.0.0/24(rw,sync,no_subtree_check,no_root_squash)
 
 exportfs -ra && systemctl restart nfs-kernel-server
 ```
@@ -168,6 +170,8 @@ done
 
 #### Swarm Inter-node Rules
 ```bash
+# Replace with space-separated IPs of all swarm nodes
+# Example: for ip in 10.0.0.10 10.0.0.11 10.0.0.12 10.0.0.13; do
 for ip in <ALL_NODE_IPS>; do
   ufw allow from $ip to any port 2377,7946 proto tcp
   ufw allow from $ip to any port 7946,4789 proto udp
@@ -243,13 +247,39 @@ services:
 ### Step 9: Deploy Egress Proxy (Squid)
 **App Name**: `openclaw-egress`
 
+First, create the Squid config file on the `nyc` node:
+```bash
+mkdir -p /opt/openclaw-config
+cat > /opt/openclaw-config/squid.conf << 'EOF'
+http_port 3128
+
+# Only allow port 443 (HTTPS)
+acl Safe_ports port 443
+http_access deny !Safe_ports
+
+# Whitelist LLM provider API domains (add your providers here)
+acl llm_apis dstdomain .anthropic.com
+acl llm_apis dstdomain .openai.com
+# acl llm_apis dstdomain .api.groq.com
+# acl llm_apis dstdomain .googleapis.com
+
+# Only allow HTTPS CONNECT to whitelisted domains (no plain HTTP)
+acl CONNECT method CONNECT
+http_access allow CONNECT llm_apis
+
+# Deny everything else
+http_access deny all
+EOF
+```
+
+Then deploy via CapRover:
 ```yaml
 captainVersion: 4
 services:
   openclaw-egress:
     image: ubuntu/squid:6.10-24.04_beta
     volumes:
-      - ./squid.conf:/etc/squid/squid.conf:ro
+      - /opt/openclaw-config/squid.conf:/etc/squid/squid.conf:ro
     # NOTE: deploy block is for documentation only — CapRover ignores it.
     # Apply via Service Update Override (Step 10.1).
     deploy:
@@ -260,26 +290,6 @@ services:
         limits:
           cpus: "0.5"
           memory: 512M
-```
-
-**`squid.conf`** — deny-by-default with explicit LLM API whitelist:
-```
-http_port 3128
-
-# Whitelist LLM provider API domains (add your providers here)
-acl llm_apis dstdomain .anthropic.com
-acl llm_apis dstdomain .openai.com
-# acl llm_apis dstdomain .api.groq.com
-# acl llm_apis dstdomain .googleapis.com
-
-# Allow HTTPS CONNECT to whitelisted domains
-acl SSL_ports port 443
-acl CONNECT method CONNECT
-http_access allow CONNECT SSL_ports llm_apis
-http_access allow llm_apis
-
-# Deny everything else
-http_access deny all
 ```
 
 ### Step 10: Post-Deployment Configuration
@@ -301,7 +311,10 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
         "NanoCPUs": 500000000
       }
     }
-  }
+  },
+  "Networks": [
+    { "Target": "openclaw-net" }
+  ]
 }
 ```
 
@@ -329,7 +342,10 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
     "RestartPolicy": {
       "Condition": "on-failure"
     }
-  }
+  },
+  "Networks": [
+    { "Target": "openclaw-net" }
+  ]
 }
 ```
 
@@ -346,7 +362,10 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
         "NanoCPUs": 500000000
       }
     }
-  }
+  },
+  "Networks": [
+    { "Target": "openclaw-net" }
+  ]
 }
 ```
 
@@ -357,11 +376,12 @@ docker service update --force srv-captain--openclaw
 docker service update --force srv-captain--openclaw-egress
 ```
 
-Verify constraints are applied:
+Verify constraints and network are applied:
 ```bash
 docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Placement}}'
 docker service inspect srv-captain--docker-proxy --format '{{json .Spec.TaskTemplate.Placement}}'
 docker service inspect srv-captain--openclaw-egress --format '{{json .Spec.TaskTemplate.Placement}}'
+docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Networks}}'
 ```
 
 #### Step 10.2: Provision API Keys
@@ -369,7 +389,7 @@ docker service inspect srv-captain--openclaw-egress --format '{{json .Spec.TaskT
 OpenClaw needs LLM provider API keys to function. Provision them inside the container:
 
 ```bash
-docker exec -it $(docker ps -q -f name=srv-captain--openclaw) sh
+docker exec -it $(docker ps -q -f "name=srv-captain--openclaw\.") sh
 
 # Create .env file for API keys
 cat > /root/.openclaw/.env << 'ENVEOF'
@@ -390,15 +410,25 @@ exit
 
 #### Step 10.3: Gateway and Sandbox Hardening
 
-```bash
-docker exec -it $(docker ps -q -f name=srv-captain--openclaw) sh
+Generate the gateway password on the host (where `openssl` is available), then apply all hardening config inside the container:
 
+```bash
+# Generate password on the host
+GW_PASSWORD=$(openssl rand -hex 32)
+echo "Save this gateway password: $GW_PASSWORD"
+
+# Apply hardening inside the container
+docker exec -it $(docker ps -q -f "name=srv-captain--openclaw\.") sh
+```
+
+Inside the container shell:
+```bash
 # Gateway — bind to all interfaces since CapRover's nginx reverse proxy
 # connects via the overlay network, not loopback.
 # trustedProxies should include CapRover's nginx (captain) service.
 openclaw config set gateway.bind "0.0.0.0"
 openclaw config set gateway.trustedProxies '["127.0.0.1", "10.0.0.0/8", "172.16.0.0/12"]'
-openclaw config set gateway.password "$(openssl rand -hex 32)"
+openclaw config set gateway.password "<PASTE_GW_PASSWORD_HERE>"
 
 # Sandbox isolation
 openclaw config set agents.defaults.sandbox.mode "all"
@@ -427,15 +457,18 @@ openclaw doctor
 openclaw sandbox explain
 
 exit
+```
 
+Back on the host:
+```bash
 docker service update --force srv-captain--openclaw
 ```
 
 ### Step 11: Verification
 ```bash
 # Inside the OpenClaw container
-docker exec $(docker ps -q -f name=srv-captain--openclaw) openclaw security audit --deep
-docker exec $(docker ps -q -f name=srv-captain--openclaw) openclaw sandbox explain
+docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") openclaw security audit --deep
+docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") openclaw sandbox explain
 
 # Verify placement constraints are actually applied
 docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Placement}}'
@@ -449,7 +482,8 @@ docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate
 docker node ps nyc
 
 # Verify egress proxy is working (should succeed for whitelisted domains)
-docker exec $(docker ps -q -f name=srv-captain--openclaw) curl -x http://srv-captain--openclaw-egress:3128 -I https://api.anthropic.com
+docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") \
+  curl -x http://srv-captain--openclaw-egress:3128 -I https://api.anthropic.com
 
 # Verify gateway is reachable through CapRover
 curl -I https://openclaw.yourdomain.com
@@ -465,21 +499,33 @@ mkdir -p /opt/openclaw-monitoring/{logs,backups}
 **Main Maintenance Script** (`openclaw-maintenance.sh`):
 ```bash
 #!/bin/bash
+set -euo pipefail
 LOG="/opt/openclaw-monitoring/logs/maintenance-$(date +%F-%H%M).log"
-echo "=== OpenClaw Maintenance Run - $(date) ===" | tee -a $LOG
+OC_CONTAINER() { docker ps -q -f "name=srv-captain--openclaw\."; }
+
+echo "=== OpenClaw Maintenance Run - $(date) ===" | tee -a "$LOG"
 
 # Backup OpenClaw data
 tar -czf /opt/openclaw-monitoring/backups/openclaw-data-$(date +%F).tar.gz \
-  -C /var/lib/docker/volumes/openclaw-data/_data . 2>> $LOG
+  -C /var/lib/docker/volumes/openclaw-data/_data . 2>> "$LOG"
 
-# Security audit
-docker exec $(docker ps -q -f name=srv-captain--openclaw) openclaw security audit --deep --fix >> $LOG 2>&1
+# Security audit (before force-update, while container is stable)
+docker exec $(OC_CONTAINER) openclaw security audit --deep --fix >> "$LOG" 2>&1
 
 # Force-update to pinned image (catches config drift)
-docker service update --force --image openclaw/openclaw:2026.2.15 srv-captain--openclaw >> $LOG 2>&1
+docker service update --force --image openclaw/openclaw:2026.2.15 srv-captain--openclaw >> "$LOG" 2>&1
 
-# Health check
-docker exec $(docker ps -q -f name=srv-captain--openclaw) openclaw doctor >> $LOG 2>&1
+# Wait for new container to be running after force-update
+echo "Waiting for new container to stabilize..." >> "$LOG"
+sleep 30
+RETRIES=0
+while [ -z "$(OC_CONTAINER)" ] && [ $RETRIES -lt 12 ]; do
+  sleep 5
+  RETRIES=$((RETRIES + 1))
+done
+
+# Health check (against the new container)
+docker exec $(OC_CONTAINER) openclaw doctor >> "$LOG" 2>&1
 
 # Prune old backups (keep 14 days)
 find /opt/openclaw-monitoring/backups -name "*.tar.gz" -mtime +14 -delete
@@ -487,23 +533,26 @@ find /opt/openclaw-monitoring/backups -name "*.tar.gz" -mtime +14 -delete
 # Prune old logs (keep 30 days)
 find /opt/openclaw-monitoring/logs -name "*.log" -mtime +30 -delete
 
-echo "=== Maintenance Complete ===" | tee -a $LOG
+echo "=== Maintenance Complete ===" | tee -a "$LOG"
 ```
 
 **Password Rotation Script** (`rotate-password.sh`):
 ```bash
 #!/bin/bash
+set -euo pipefail
 LOG="/opt/openclaw-monitoring/logs/password-rotation-$(date +%F).log"
-echo "=== Password Rotation - $(date) ===" | tee -a $LOG
+OC_CONTAINER() { docker ps -q -f "name=srv-captain--openclaw\."; }
+
+echo "=== Password Rotation - $(date) ===" | tee -a "$LOG"
 
 NEW_PASSWORD=$(openssl rand -hex 32)
-docker exec $(docker ps -q -f name=srv-captain--openclaw) \
-  openclaw config set gateway.password "$NEW_PASSWORD" >> $LOG 2>&1
+docker exec $(OC_CONTAINER) \
+  openclaw config set gateway.password "$NEW_PASSWORD" >> "$LOG" 2>&1
 
-docker service update --force srv-captain--openclaw >> $LOG 2>&1
+docker service update --force srv-captain--openclaw >> "$LOG" 2>&1
 
-echo "Password rotated successfully. Update any clients with the new password." | tee -a $LOG
-echo "=== Rotation Complete ===" | tee -a $LOG
+echo "Password rotated successfully. Update any clients with the new password." | tee -a "$LOG"
+echo "=== Rotation Complete ===" | tee -a "$LOG"
 ```
 
 **Cron Schedule** (add to `nyc` node):
@@ -522,7 +571,7 @@ echo "=== Rotation Complete ===" | tee -a $LOG
 | Sandbox fails | Check `docker-proxy` logs: `docker service logs srv-captain--docker-proxy` | Verify EXEC=1 is set, socket proxy is reachable |
 | Gateway unreachable | Verify bind address + trustedProxies include CapRover's overlay IP range | Set `gateway.bind "0.0.0.0"` and expand `trustedProxies` |
 | Constraint issues | `docker node inspect nyc --format '{{json .Spec.Labels}}'` | Verify label exists, check Service Update Override is applied |
-| Agents can't reach LLM APIs | `docker exec <openclaw> curl -x http://srv-captain--openclaw-egress:3128 https://api.anthropic.com` | Check squid.conf whitelist, verify HTTP_PROXY env var |
+| Agents can't reach LLM APIs | `docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") curl -x http://srv-captain--openclaw-egress:3128 https://api.anthropic.com` | Check squid.conf whitelist, verify HTTP_PROXY env var |
 | Service not on trusted node | `docker service ps srv-captain--openclaw` | Re-apply Service Update Override constraints |
 | Failed update | `docker service rollback srv-captain--openclaw` | Rollback to previous service spec, then investigate |
 
