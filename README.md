@@ -1,4 +1,4 @@
-# 🦞 OpenClaw — Security-Maximal 4-Node Swarm Deploy
+# 🦞 OpenClaw Swarm
 
 Secure, HA swarm with isolated OpenClaw on CapRover. 🦞
 
