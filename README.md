@@ -110,10 +110,16 @@ docker node update --label-add openclaw.trusted=true nyc
 
 ### Step 4: Join Additional Manager Nodes
 
-On the other two nodes:
+On the other two **manager** nodes:
 
 ```bash
 docker swarm join --token <MANAGER_TOKEN_FROM_NYC> <NYC_LEADER_IP>:2377
+```
+
+On the **worker** node:
+
+```bash
+docker swarm join --token <WORKER_TOKEN_FROM_NYC> <NYC_LEADER_IP>:2377
 ```
 
 Verify:
@@ -157,8 +163,7 @@ ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
 
-ufw allow from $ADMIN_IP to any port 9922 proto tcp
-ufw limit 9922/tcp
+ufw limit from $ADMIN_IP to any port 9922 proto tcp
 ```
 
 #### Cloudflare Ingress Setup
@@ -186,15 +191,17 @@ for ip in <ALL_NODE_IPS>; do
   ufw allow from $ip to any port 7946,4789 proto udp
 done
 
-# NFS — only clients need to reach the NFS server on port 2049 (NFSv4 only; port 111/rpcbind not needed)
-# Run this rule ONLY on the NFS server node (nyc):
+ufw-docker install
+systemctl restart docker
+ufw --force enable
+```
+
+#### NFS Server Firewall (Run Only on NFS Server Node)
+```bash
+# NFSv4 only — port 2049; port 111/rpcbind is not needed
 for ip in <NFS_CLIENT_IPS>; do
   ufw allow from $ip to any port 2049 proto tcp
 done
-
-ufw-docker install --confirm-license
-systemctl restart docker
-ufw --force enable
 ```
 
 ### Step 7: Deploy Docker Socket Proxy
@@ -295,6 +302,8 @@ acl Safe_ports port 443
 http_access deny !Safe_ports
 
 # Restrict client source to Docker overlay networks
+# NOTE: Tighten these to your actual overlay subnet for defense-in-depth:
+#   docker network inspect openclaw-net --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
 acl localnet src 10.0.0.0/8
 acl localnet src 172.16.0.0/12
 http_access deny !localnet
@@ -302,7 +311,7 @@ http_access deny !localnet
 # Whitelist LLM provider API domains (add your providers here)
 acl llm_apis dstdomain .anthropic.com
 acl llm_apis dstdomain .openai.com
-# acl llm_apis dstdomain .api.groq.com
+# acl llm_apis dstdomain .groq.com
 # acl llm_apis dstdomain .googleapis.com
 
 # CONNECT tunneling (used for all HTTPS requests through the proxy)
@@ -364,6 +373,9 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
         "MemoryBytes": 536870912,
         "NanoCPUs": 500000000
       }
+    },
+    "RestartPolicy": {
+      "Condition": "on-failure"
     }
   },
   "Networks": [
@@ -417,6 +429,9 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
         "MemoryBytes": 536870912,
         "NanoCPUs": 500000000
       }
+    },
+    "RestartPolicy": {
+      "Condition": "on-failure"
     }
   },
   "Networks": [
@@ -675,13 +690,19 @@ OC_CONTAINER() { docker ps -q -f "name=srv-captain--openclaw\."; }
 ) 200>/opt/openclaw-monitoring/.rotate-password.lock
 ```
 
-**Cron Schedule** (add to `nyc` node):
+Make scripts executable:
+```bash
+chmod 700 /opt/openclaw-monitoring/openclaw-maintenance.sh
+chmod 700 /opt/openclaw-monitoring/rotate-password.sh
+```
+
+**Cron Schedule** (add to root's crontab on `nyc`: `sudo crontab -e`):
 ```bash
 # Weekly maintenance (Sunday 3 AM)
-0 3 * * 0 /opt/openclaw-monitoring/openclaw-maintenance.sh
+0 3 * * 0 /opt/openclaw-monitoring/openclaw-maintenance.sh >> /opt/openclaw-monitoring/logs/maintenance-cron.log 2>&1
 
 # Monthly password rotation (1st of month, 4 AM)
-0 4 1 * * /opt/openclaw-monitoring/rotate-password.sh
+0 4 1 * * /opt/openclaw-monitoring/rotate-password.sh >> /opt/openclaw-monitoring/logs/rotation-cron.log 2>&1
 ```
 
 ### Step 13: Troubleshooting
@@ -741,7 +762,6 @@ for svc in docker-proxy openclaw openclaw-egress; do
   docker service inspect "srv-captain--${svc}" \
     --format '{{json .Spec}}' > "/opt/openclaw-config/overrides/${svc}-spec.json"
 done
-scp -r nyc:/opt/openclaw-config/overrides /opt/openclaw-config/
 
 echo "Standby node $STANDBY_NODE is pre-staged for failover."
 ```
@@ -839,6 +859,7 @@ If only 1 manager remains, Swarm is read-only and cannot schedule services.
 ```bash
 # 1. Force the surviving manager to become a single-node quorum
 #    WARNING: This is destructive — lost managers cannot rejoin without re-init.
+#    Pending uncommitted Raft entries (service updates, secrets) may be lost.
 docker swarm init --force-new-cluster --advertise-addr <SURVIVING_NODE_IP>
 
 # 2. Verify the node is now a leader
@@ -876,24 +897,37 @@ If `nyc` was both the NFS server and is now down, the NFS mount will hang on all
 # 1. Force-unmount the stale NFS mount
 umount -f /captain/data 2>/dev/null || umount -l /captain/data
 
-# 2. Option A: Restore from the most recent backup
+# 2. Restore CapRover data
+#    NOTE: The Step 12 backup covers the openclaw-data Docker volume, not /captain/data.
+#    If you need CapRover state, restore it from a separate /captain/data backup (see below).
 mkdir -p /captain/data
-tar -xzf /opt/openclaw-monitoring/backups/openclaw-data-$(date +%F).tar.gz \
-  -C /captain/data 2>/dev/null || \
-  tar -xzf "$(ls -t /opt/openclaw-monitoring/backups/*.tar.gz | head -1)" \
-  -C /captain/data
+# If you have a captain-data backup:
+#   tar -xzf /opt/openclaw-monitoring/backups/captain-data-YYYY-MM-DD.tar.gz -C /captain/data
 
-# 3. Option B: Promote the standby as the new NFS server
+# 3. Restore the openclaw-data Docker volume from backup
+LATEST_BACKUP=$(ls -t /opt/openclaw-monitoring/backups/openclaw-data-*.tar.gz 2>/dev/null | head -1)
+if [ -n "$LATEST_BACKUP" ]; then
+  docker volume create openclaw-data 2>/dev/null || true
+  docker run --rm \
+    -v openclaw-data:/target \
+    -v /opt/openclaw-monitoring/backups:/backup:ro \
+    alpine:3.21 sh -c "tar -xzf /backup/$(basename "$LATEST_BACKUP") -C /target"
+  echo "Restored openclaw-data volume from $LATEST_BACKUP"
+else
+  echo "WARNING: No openclaw-data backups found in /opt/openclaw-monitoring/backups/"
+fi
+
+# 4. Option B: Promote the standby as the new NFS server
 apt install nfs-kernel-server -y
 echo "/captain/data <SWARM_SUBNET_CIDR>(rw,sync,no_subtree_check,no_root_squash)" > /etc/exports
 exportfs -ra && systemctl restart nfs-kernel-server
 
-# 4. Update /etc/fstab on remaining client nodes to point to the new NFS server IP
+# 5. Update /etc/fstab on remaining client nodes to point to the new NFS server IP
 # On each client node:
 #   sed -i "s/<OLD_NFS_IP>/<NEW_NFS_IP>/" /etc/fstab
 #   mount -a
 
-# 5. Continue with failover (Section 14.2, starting at step 3)
+# 6. Continue with failover (Section 14.2, starting at step 3)
 ```
 
 #### 14.5 Backup Verification
@@ -910,11 +944,11 @@ if [ -z "$LATEST" ]; then
 fi
 
 # Test extraction to a temporary directory
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
-if tar -xzf "$LATEST" -C "$TMPDIR" 2>&1; then
-  FILE_COUNT=$(find "$TMPDIR" -type f | wc -l)
-  TOTAL_SIZE=$(du -sh "$TMPDIR" | cut -f1)
+VERIFY_DIR=$(mktemp -d)
+trap 'rm -rf "$VERIFY_DIR"' EXIT
+if tar -xzf "$LATEST" -C "$VERIFY_DIR" 2>&1; then
+  FILE_COUNT=$(find "$VERIFY_DIR" -type f | wc -l)
+  TOTAL_SIZE=$(du -sh "$VERIFY_DIR" | cut -f1)
   echo "OK: Backup $LATEST verified — $FILE_COUNT files, $TOTAL_SIZE"
 else
   echo "ERROR: Backup $LATEST is corrupted or unreadable"
@@ -922,8 +956,12 @@ else
 fi
 ```
 
-Add to cron on the standby node:
+Save the script and add to cron on the standby node:
 ```bash
+# Save the script above to /opt/openclaw-monitoring/verify-backup.sh, then:
+chmod 700 /opt/openclaw-monitoring/verify-backup.sh
+
+# Add to root's crontab (sudo crontab -e):
 # Monthly backup verification (15th of month, 5 AM)
 0 5 15 * * /opt/openclaw-monitoring/verify-backup.sh >> /opt/openclaw-monitoring/logs/backup-verify.log 2>&1
 ```
