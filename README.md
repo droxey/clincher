@@ -237,6 +237,10 @@ services:
         limits:
           cpus: "0.5"
           memory: 512M
+    # networks is also ignored by CapRover — applied via override.
+    networks:
+      - captain-overlay-network
+      - openclaw-net
 ```
 
 ### Step 8: Deploy OpenClaw Gateway (Primary Service)
@@ -267,6 +271,9 @@ services:
           memory: 6G
       restart_policy:
         condition: on-failure
+    networks:
+      - captain-overlay-network
+      - openclaw-net
 ```
 
 ### Step 9: Deploy Egress Proxy (Squid)
@@ -278,9 +285,14 @@ mkdir -p /opt/openclaw-config
 cat > /opt/openclaw-config/squid.conf << 'EOF'
 http_port 3128
 
-# Only allow port 443 (HTTPS)
+# Only allow HTTPS port (443)
 acl Safe_ports port 443
 http_access deny !Safe_ports
+
+# Restrict client source to Docker overlay networks
+acl localnet src 10.0.0.0/8
+acl localnet src 172.16.0.0/12
+http_access deny !localnet
 
 # Whitelist LLM provider API domains (add your providers here)
 acl llm_apis dstdomain .anthropic.com
@@ -288,12 +300,21 @@ acl llm_apis dstdomain .openai.com
 # acl llm_apis dstdomain .api.groq.com
 # acl llm_apis dstdomain .googleapis.com
 
-# Only allow HTTPS CONNECT to whitelisted domains (no plain HTTP)
+# CONNECT tunneling (used for all HTTPS requests through the proxy)
 acl CONNECT method CONNECT
+http_access deny CONNECT !llm_apis
 http_access allow CONNECT llm_apis
+
+# Allow plain HTTP(S) forwarding to whitelisted domains only
+http_access allow llm_apis
 
 # Deny everything else
 http_access deny all
+
+# Hardening
+via off
+forwarded_for delete
+httpd_suppress_version_string on
 EOF
 ```
 
@@ -315,6 +336,9 @@ services:
         limits:
           cpus: "0.5"
           memory: 512M
+    networks:
+      - captain-overlay-network
+      - openclaw-net
 ```
 
 ### Step 10: Post-Deployment Configuration
@@ -338,6 +362,7 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
     }
   },
   "Networks": [
+    { "Target": "captain-overlay-network" },
     { "Target": "openclaw-net" }
   ]
 }
@@ -369,6 +394,7 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
     }
   },
   "Networks": [
+    { "Target": "captain-overlay-network" },
     { "Target": "openclaw-net" }
   ]
 }
@@ -389,16 +415,17 @@ CapRover's `captainVersion: 4` parser ignores `deploy` blocks. You must apply pl
     }
   },
   "Networks": [
+    { "Target": "captain-overlay-network" },
     { "Target": "openclaw-net" }
   ]
 }
 ```
 
-> **Important**: The `Networks` key adds `openclaw-net` to each service. Depending on how CapRover merges overrides, this may **replace** the default `captain-overlay-network` instead of appending. After applying, verify that services are still attached to both networks:
+> **Important**: Both `captain-overlay-network` (for CapRover service discovery via `srv-captain--<name>`) and `openclaw-net` (for encrypted inter-service traffic) are required. If either network is missing, services cannot communicate. After applying, verify:
 > ```bash
 > docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Networks}}'
 > ```
-> If `captain-overlay-network` is missing, add it back to the `Networks` array in each override.
+> Output should list both network targets.
 
 After applying overrides, force-update each service:
 ```bash
@@ -451,6 +478,10 @@ exit
 Generate the gateway password on the host (where `openssl` is available), then apply all hardening config inside the container:
 
 ```bash
+# Ensure monitoring directory exists (also created in Step 12 — safe to run twice)
+mkdir -p /opt/openclaw-monitoring/{logs,backups}
+chmod 700 /opt/openclaw-monitoring /opt/openclaw-monitoring/logs /opt/openclaw-monitoring/backups
+
 # Generate password on the host and save to a secured file (not stdout)
 openssl rand -hex 32 > /opt/openclaw-monitoring/.gateway-password
 chmod 600 /opt/openclaw-monitoring/.gateway-password
@@ -564,7 +595,7 @@ OC_CONTAINER() { docker ps -q -f "name=srv-captain--openclaw\."; }
   docker run --rm \
     -v openclaw-data:/source:ro \
     -v /opt/openclaw-monitoring/backups:/backup \
-    alpine tar -czf "/backup/openclaw-data-$(date +%F).tar.gz" -C /source . 2>> "$LOG"
+    alpine:3.21 tar -czf "/backup/openclaw-data-$(date +%F).tar.gz" -C /source . 2>> "$LOG"
 
   # Security audit (before force-update, while container is stable)
   CID=$(OC_CONTAINER)
