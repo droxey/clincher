@@ -319,7 +319,7 @@ services:
     restart: unless-stopped
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:main-stable
     container_name: openclaw-litellm
     volumes:
       - ./config/litellm-config.yaml:/app/config.yaml:ro
@@ -382,6 +382,8 @@ COMPOSE_EOF
 > - **`egress-net`** — gives `openclaw-egress` (Squid) a route to the internet for whitelisted LLM API domains.
 >
 > The `openclaw` service is on `openclaw-net` + `proxy-net`. The egress proxy is on `openclaw-net` + `egress-net`. The docker-proxy stays on `openclaw-net` only — fully isolated.
+>
+> **Known trade-off**: `proxy-net` is not `internal` (Caddy needs it to reach Let's Encrypt for ACME challenges). This means the `openclaw` Gateway process — but not sandbox containers (`network=none`) — has an internet-routable network interface. Well-behaved HTTP clients honor `HTTPS_PROXY` and route through Squid, but a subprocess that ignores proxy env vars could bypass the egress whitelist. If using Cloudflare Tunnel instead of Caddy (Option B, Step 9), you can add `internal: true` to `proxy-net` to close this gap.
 
 ### Step 4: Deploy
 
@@ -571,7 +573,7 @@ openclaw config set agents.defaults.model "anthropic/claude-opus-4-6"
 openclaw config set agents.defaults.maxTokens 8192
 
 # Voyage AI key for memory embeddings (Step 8) — this one stays in OpenClaw
-# because Voyage is called directly, not through LiteLLM
+# because Voyage bypasses LiteLLM (but still routes through Squid egress proxy)
 nano /root/.openclaw/.env
 # Add: VOYAGE_API_KEY=pa-your-key-here
 
@@ -731,18 +733,16 @@ docker inspect openclaw-docker-proxy --format '{{json .State.Health}}'
 docker inspect openclaw-litellm --format '{{json .State.Health}}'
 docker inspect openclaw-egress --format '{{json .State.Health}}'
 
-# ── Resource Limits (8 GB budget: 4G openclaw + 1G litellm + 128M proxy + 128M squid = 5.25G) ──
-docker stats --no-stream
-# Remaining ~2.75 GB covers: OS (~1G), Docker daemon (~300M), sandbox containers, reverse proxy
-
 # ── LiteLLM Proxy ───────────────────────────────────────────────────
 # Health check (should return 200)
 docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness
 # Model list (should show configured models)
 docker exec openclaw wget -qO- http://openclaw-litellm:4000/models
-# ── Resource Limits ──
-# Budget: 4G openclaw + 128M proxy + 128M squid + 3×512M sandboxes = 5.8G
-# Remaining ~2.2G covers: OS (~1G), Docker daemon (~300M), reverse proxy
+
+# ── Resource Limits (8 GB budget) ───────────────────────────────────
+# Worst-case: 4G openclaw + 1G litellm + 128M proxy + 128M squid + 3×512M sandboxes = ~6.75G
+# Remaining ~1.25G covers: OS (~1G), Docker daemon (~300M), reverse proxy
+# In practice, openclaw reserves 2G and scales up on demand; sandboxes are ephemeral.
 docker stats --no-stream
 
 # ── Network Connectivity ─────────────────────────────────────────────
@@ -856,7 +856,7 @@ TOKEN_FILE="/opt/openclaw/monitoring/.gateway-token"
 
   mv "${TOKEN_FILE}.new" "$TOKEN_FILE"
 
-  docker compose -f /opt/openclaw/docker-compose.yml restart openclaw litellm >> "$LOG" 2>&1
+  docker compose -f /opt/openclaw/docker-compose.yml restart openclaw >> "$LOG" 2>&1
 
   echo "Token rotated. New token saved to $TOKEN_FILE" >> "$LOG"
   echo "=== Rotation Complete ===" >> "$LOG"
@@ -1352,7 +1352,7 @@ A warm standby is a pre-provisioned server that mirrors the production configura
 docker pull openclaw/openclaw:2026.2.15
 docker pull tecnativa/docker-socket-proxy:0.6.0
 docker pull ubuntu/squid:6.6-24.04_edge
-docker pull ghcr.io/berriai/litellm:main-latest
+docker pull ghcr.io/berriai/litellm:main-stable
 docker pull caddy:2-alpine    # if using Caddy
 ```
 
@@ -1649,12 +1649,11 @@ The scaling pattern is **bot partitioning**: create multiple Telegram bots (via 
 
 1. Create a second Telegram bot via [@BotFather](https://t.me/BotFather) to get a second bot token.
 
-2. Add a second OpenClaw service and data volume:
+2. Create a Compose override file for the secondary instance (same pattern as Step 9 — keeps the base `docker-compose.yml` clean):
 
 ```bash
-# Add to /opt/openclaw/docker-compose.yml:
-cat >> /opt/openclaw/docker-compose.yml << 'SECONDARY_EOF'
-
+cat > /opt/openclaw/compose.secondary.yml << 'EOF'
+services:
   openclaw-secondary:
     image: openclaw/openclaw:2026.2.15
     container_name: openclaw-secondary
@@ -1689,11 +1688,18 @@ cat >> /opt/openclaw/docker-compose.yml << 'SECONDARY_EOF'
         reservations:
           memory: 2G
     restart: unless-stopped
-SECONDARY_EOF
 
-# Add the secondary data volume:
-# Under the volumes: key in docker-compose.yml, add:
-#   openclaw-data-secondary:
+networks:
+  openclaw-net:
+    external: true
+    name: openclaw_openclaw-net
+  proxy-net:
+    external: true
+    name: openclaw_proxy-net
+
+volumes:
+  openclaw-data-secondary:
+EOF
 ```
 
 3. Apply the same hardening to the secondary instance (repeat Step 5 targeting `openclaw-secondary`).
@@ -1713,7 +1719,7 @@ openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
 openclaw config set channels.telegram.token "YOUR_SECONDARY_BOT_TOKEN"
 exit
 
-docker compose up -d
+docker compose -f docker-compose.yml -f compose.secondary.yml up -d
 ```
 
 5. Update Caddy for path-based routing to each instance's Web UI:
@@ -1722,7 +1728,7 @@ docker compose up -d
 openclaw.yourdomain.com {
     # Primary instance — default route + Web UI
     handle /api/* {
-        reverse_proxy openclaw:3000 {
+        reverse_proxy openclaw:18789 {
             header_up X-Forwarded-Proto {scheme}
         }
     }
@@ -1730,13 +1736,13 @@ openclaw.yourdomain.com {
     # Secondary instance — separate API namespace
     handle /secondary/api/* {
         uri strip_prefix /secondary
-        reverse_proxy openclaw-secondary:3000 {
+        reverse_proxy openclaw-secondary:18789 {
             header_up X-Forwarded-Proto {scheme}
         }
     }
 
     # Default: primary Web UI
-    reverse_proxy openclaw:3000
+    reverse_proxy openclaw:18789
 }
 ```
 
