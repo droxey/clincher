@@ -90,23 +90,24 @@ This means:
 
 ## README Structure
 
-The `README.md` follows a strict 13-step deployment sequence. When editing, preserve this order:
+The `README.md` (single-server guide) follows a strict 14-step deployment sequence. When editing, preserve this order:
 
-1. **Prerequisites** — UFW, Cloudflare, static admin IP
-2. **Initialize Swarm** — `docker swarm init` on `nyc`
-3. **Label Trusted Node** — `openclaw.trusted=true`
-4. **Join Managers** — Additional Swarm nodes
-5. **NFS Shared Storage** — CapRover dashboard HA
-6. **Firewall** — UFW rules for admin, Cloudflare, Swarm inter-node, NFS
-7. **Docker Socket Proxy** — First service deployed
-8. **OpenClaw Gateway** — Main service
-9. **Egress Proxy (Squid)** — Outbound traffic control
-10. **Post-Deployment Config** — Service Update Overrides, API keys, hardening
-11. **Verification** — Health checks, constraint checks, connectivity tests
-12. **Maintenance** — Backup scripts, password rotation, cron
-13. **Troubleshooting** — Symptom/diagnostic/fix table
+1. **Prerequisites** — Docker, system tuning, daemon config
+2. **Configure Firewall** — UFW, Cloudflare ingress
+3. **Create Configuration Files** — Squid config, Docker Compose file
+4. **Deploy** — `docker compose up -d`, tighten Squid ACL
+5. **Gateway and Sandbox Hardening** — Auth, sandbox isolation, tool denials, SOUL.md
+6. **API Keys and Model Configuration** — LLM provider keys, default model
+7. **Channel Integration** — Discord, WhatsApp, Telegram, Signal
+8. **Memory and RAG Configuration** — Voyage AI embeddings, QMD indexing
+9. **Reverse Proxy Setup** — Caddy (recommended) or Cloudflare Tunnel
+10. **Verification** — Security audit, health checks, connectivity tests
+11. **Maintenance** — Backup scripts, token rotation, cron
+12. **Troubleshooting** — Symptom/diagnostic/fix table
+13. **Disaster Recovery** — Recovery objectives, restore procedure
+14. **Scaling** — Vertical scaling, LiteLLM proxy, channel partitioning, Swarm migration
 
-**Deployment order matters**: Steps 7→8→9 must be deployed in sequence (gateway depends on docker-proxy; egress proxy is referenced by gateway's `HTTP_PROXY`).
+**Deployment order matters**: The Compose file defines `depends_on` with health conditions, so `docker compose up -d` handles service ordering automatically. Hardening (Step 5) must be applied before exposing the gateway to traffic (Step 9).
 
 ## Development Workflow
 

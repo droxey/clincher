@@ -58,6 +58,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 - [Step 11: Maintenance](#step-11-maintenance)
 - [Step 12: Troubleshooting](#step-12-troubleshooting)
 - [Step 13: Disaster Recovery](#step-13-disaster-recovery)
+- [Step 14: Scaling](#step-14-scaling)
 
 ---
 
@@ -207,6 +208,34 @@ cache deny all
 EOF
 ```
 
+#### LiteLLM Model Proxy Config
+
+LiteLLM sits between OpenClaw and LLM providers, adding per-model rate limiting, spend caps, audit logging, and centralized API key management. API keys live here — OpenClaw never touches them directly.
+
+```bash
+cat > /opt/openclaw/config/litellm-config.yaml << 'EOF'
+model_list:
+  - model_name: "anthropic/claude-opus-4-6"
+    litellm_params:
+      model: "claude-opus-4-6"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+      max_budget: 100.0        # USD per month
+      rpm: 60                  # requests per minute
+  - model_name: "anthropic/claude-sonnet-4-5-20250929"
+    litellm_params:
+      model: "claude-sonnet-4-5-20250929"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+      max_budget: 50.0
+      rpm: 120
+
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  alerting: ["log"]
+EOF
+```
+
+> **Why a model proxy?** LLM API calls are the primary cost driver and the most variable load. Without a proxy, a runaway agent or prompt injection attack can burn through your API budget in minutes. LiteLLM gives you spend caps, per-model rate limits, and audit logging at the infrastructure level — not dependent on the agent behaving correctly.
+
 #### Docker Compose File
 
 ```bash
@@ -261,7 +290,7 @@ services:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
       HTTP_PROXY: http://openclaw-egress:3128
       HTTPS_PROXY: http://openclaw-egress:3128
-      NO_PROXY: openclaw-docker-proxy,localhost,127.0.0.1
+      NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
     volumes:
       - openclaw-data:/root/.openclaw
@@ -272,6 +301,8 @@ services:
       docker-proxy:
         condition: service_healthy
       openclaw-egress:
+        condition: service_healthy
+      litellm:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "openclaw", "doctor", "--quiet"]
@@ -285,6 +316,30 @@ services:
           memory: 4G
         reservations:
           memory: 2G
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: openclaw-litellm
+    volumes:
+      - ./config/litellm-config.yaml:/app/config.yaml:ro
+    environment:
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      HTTP_PROXY: http://openclaw-egress:3128
+      HTTPS_PROXY: http://openclaw-egress:3128
+    networks:
+      - openclaw-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
     restart: unless-stopped
 
   openclaw-egress:
@@ -332,16 +387,28 @@ COMPOSE_EOF
 
 ```bash
 cd /opt/openclaw
+
+# Generate LiteLLM master key and API keys .env file
+openssl rand -hex 32 > /opt/openclaw/.env.tmp
+echo "LITELLM_MASTER_KEY=$(cat /opt/openclaw/.env.tmp)" > /opt/openclaw/.env
+rm -f /opt/openclaw/.env.tmp
+
+# Add your Anthropic API key (type/paste — do not pass keys as CLI args)
+nano /opt/openclaw/.env
+# Add: ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+chmod 600 /opt/openclaw/.env
+
 docker compose up -d
 ```
 
-Verify all three services are healthy:
+Verify all four services are healthy:
 
 ```bash
 docker compose ps
 ```
 
-All containers should show `healthy` status within 60 seconds. If `openclaw` shows `starting` for longer than 90 seconds, check logs:
+All four containers should show `healthy` status within 60 seconds. If `openclaw` shows `starting` for longer than 90 seconds, check logs:
 
 ```bash
 docker compose logs openclaw --tail 50
@@ -487,6 +554,8 @@ docker compose restart openclaw
 
 ### Step 6: API Keys and Model Configuration
 
+LLM provider API keys are managed by LiteLLM (configured in `/opt/openclaw/.env` during Step 4). OpenClaw routes all model requests through LiteLLM — keys never enter the OpenClaw container.
+
 ```bash
 docker exec -it openclaw sh
 ```
@@ -494,66 +563,47 @@ docker exec -it openclaw sh
 Inside the container:
 
 ```bash
-# Create .env file for API keys (type/paste — do not pass keys as CLI args)
-nano /root/.openclaw/.env
-# Add: ANTHROPIC_API_KEY=sk-ant-your-key-here
-# Add: OPENAI_API_KEY=sk-your-key-here (if needed)
-# Add: VOYAGE_API_KEY=pa-your-key-here (for memory embeddings — Step 8)
-
-chmod 600 /root/.openclaw/.env
+# Point OpenClaw at LiteLLM instead of direct provider APIs
+openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
 
 # Set the default model — use the strongest available for injection resistance
 openclaw config set agents.defaults.model "anthropic/claude-opus-4-6"
 openclaw config set agents.defaults.maxTokens 8192
 
+# Voyage AI key for memory embeddings (Step 8) — this one stays in OpenClaw
+# because Voyage is called directly, not through LiteLLM
+nano /root/.openclaw/.env
+# Add: VOYAGE_API_KEY=pa-your-key-here
+
+chmod 600 /root/.openclaw/.env
+
 exit
 ```
 
-Restart to load the new environment:
+To add or rotate LLM provider API keys, edit `/opt/openclaw/.env` on the host and restart LiteLLM:
 
 ```bash
-docker compose restart openclaw
+nano /opt/openclaw/.env
+# ANTHROPIC_API_KEY=sk-ant-your-key-here
+# OPENAI_API_KEY=sk-your-key-here (if needed)
+# LITELLM_MASTER_KEY=<already set in Step 4>
+docker compose restart litellm
 ```
 
-### Step 7: Channel Integration
+### Step 7: Channel Integration (Telegram)
 
-OpenClaw supports Discord, WhatsApp, Telegram, Slack, and Signal. Without at least one channel, the agent can only be reached via the Gateway Web UI / TUI.
+Without a channel, the agent can only be reached via the Gateway Web UI / TUI. This deployment uses Telegram as the sole channel integration.
 
-> **Security note**: Each channel is an inbound attack surface. Enable only the channels you need. DM pairing (configured in Step 5) gates unknown senders.
+> **Security note**: Each channel is an inbound attack surface. DM pairing (configured in Step 5) gates unknown senders.
+
+Create a Telegram bot via [@BotFather](https://t.me/BotFather), then configure it:
 
 ```bash
 docker exec -it openclaw sh
-```
 
-**Discord** (recommended for exec approval UX):
-
-```bash
-openclaw config set channels.discord.token "YOUR_DISCORD_BOT_TOKEN"
-openclaw config set channels.discord.execApprovals.target "both"
-# openclaw config set channels.discord.guildAllowFrom '["YOUR_GUILD_ID"]'
-```
-
-**WhatsApp**:
-
-```bash
-openclaw onboard --channel whatsapp
-```
-
-**Telegram**:
-
-```bash
 openclaw config set channels.telegram.token "YOUR_TELEGRAM_BOT_TOKEN"
-```
 
-**Signal**:
-
-```bash
-openclaw onboard --channel signal
-```
-
-After configuring:
-
-```bash
+# Verify channel connectivity
 openclaw doctor
 exit
 ```
@@ -561,6 +611,8 @@ exit
 ```bash
 docker compose restart openclaw
 ```
+
+> **Tip**: After restart, send a DM to your bot on Telegram. OpenClaw's DM pairing (Step 5) will prompt you to pair the bot with your account before it responds to messages.
 
 ### Step 8: Memory and RAG Configuration
 
@@ -672,12 +724,22 @@ docker exec openclaw openclaw sandbox explain
 
 # ── Container Health ─────────────────────────────────────────────────
 docker compose ps
-# All containers should show "healthy"
+# All four containers should show "healthy"
 
 docker inspect openclaw --format '{{json .State.Health}}'
 docker inspect openclaw-docker-proxy --format '{{json .State.Health}}'
+docker inspect openclaw-litellm --format '{{json .State.Health}}'
 docker inspect openclaw-egress --format '{{json .State.Health}}'
 
+# ── Resource Limits (8 GB budget: 4G openclaw + 1G litellm + 128M proxy + 128M squid = 5.25G) ──
+docker stats --no-stream
+# Remaining ~2.75 GB covers: OS (~1G), Docker daemon (~300M), sandbox containers, reverse proxy
+
+# ── LiteLLM Proxy ───────────────────────────────────────────────────
+# Health check (should return 200)
+docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness
+# Model list (should show configured models)
+docker exec openclaw wget -qO- http://openclaw-litellm:4000/models
 # ── Resource Limits ──
 # Budget: 4G openclaw + 128M proxy + 128M squid + 3×512M sandboxes = 5.8G
 # Remaining ~2.2G covers: OS (~1G), Docker daemon (~300M), reverse proxy
@@ -735,9 +797,9 @@ LOG="/opt/openclaw/monitoring/logs/backup-$(date +%F-%H%M).log"
     -v /opt/openclaw/monitoring/backups:/backup \
     alpine:3.21 tar -czf "/backup/openclaw-data-$(date +%F).tar.gz" -C /source . 2>> "$LOG"
 
-  # Backup config files
+  # Backup config files (includes LiteLLM config and .env with API keys)
   tar -czf "/opt/openclaw/monitoring/backups/openclaw-config-$(date +%F).tar.gz" \
-    -C /opt/openclaw config/ docker-compose.yml 2>> "$LOG"
+    -C /opt/openclaw config/ docker-compose.yml .env Caddyfile 2>> "$LOG"
 
   # Encrypt backups at rest
   ENCRYPTION_KEY_FILE="/opt/openclaw/monitoring/.backup-encryption-key"
@@ -794,7 +856,7 @@ TOKEN_FILE="/opt/openclaw/monitoring/.gateway-token"
 
   mv "${TOKEN_FILE}.new" "$TOKEN_FILE"
 
-  docker compose -f /opt/openclaw/docker-compose.yml restart openclaw >> "$LOG" 2>&1
+  docker compose -f /opt/openclaw/docker-compose.yml restart openclaw litellm >> "$LOG" 2>&1
 
   echo "Token rotated. New token saved to $TOKEN_FILE" >> "$LOG"
   echo "=== Rotation Complete ===" >> "$LOG"
@@ -839,7 +901,8 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Sandbox fails | `docker logs openclaw-docker-proxy` | Verify EXEC=1, check socket proxy is reachable on `openclaw-net` |
 | Gateway unreachable | `docker compose logs openclaw` | Confirm `gateway.bind "0.0.0.0"`, check `trustedProxies` includes `proxy-net` subnet |
 | Gateway auth rejected | `docker exec openclaw openclaw config get gateway.auth.mode` | Re-run Step 5 auth section; verify `Authorization: Bearer <token>` header |
-| Agents can't reach LLM APIs | `docker exec openclaw curl -x http://openclaw-egress:3128 https://api.anthropic.com` | Check squid.conf whitelist, verify HTTP_PROXY env var, check `localnet` ACL subnet |
+| Agents can't reach LLM APIs | `docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness` | Verify LiteLLM is healthy, check `agents.defaults.apiBase` points to `http://openclaw-litellm:4000`, check `ANTHROPIC_API_KEY` in `/opt/openclaw/.env` |
+| LiteLLM can't reach providers | `docker exec openclaw-litellm curl -x http://openclaw-egress:3128 -I https://api.anthropic.com` | Check squid.conf whitelist, verify `HTTP_PROXY` env var, check `localnet` ACL subnet |
 | Memory index fails | `docker exec openclaw openclaw memory index --verify` | Verify Voyage AI key, check `.voyageai.com` in squid.conf whitelist |
 | Channel not connecting | `docker exec openclaw openclaw doctor` | Check channel token, verify `dmPolicy`, check pairing status |
 | Container keeps restarting | `docker compose logs <service> --tail 100` | Check resource limits (`docker stats`), verify config files are readable |
@@ -908,6 +971,306 @@ docker exec openclaw openclaw security audit --deep
 # 9. Re-apply firewall (Step 2)
 ```
 
+### Step 14: Scaling
+
+This deployment runs a single OpenClaw Gateway process on a single server. OpenClaw's architecture — single-process Gateway, embedded LanceDB for memory, file-based session state — is inherently vertical-first. There is no built-in clustering or replica coordination.
+
+Scaling is a phased journey: upgrade the box, then separate concerns, then partition across instances.
+
+#### 14.1 Phase 1 — Vertical Scaling (First Move)
+
+The fastest path to handling more concurrent users and heavier tool execution loads. Upgrade the VPS and adjust resource limits to match.
+
+**Recommended server tiers:**
+
+| Tier | Spec | Use Case |
+|------|------|----------|
+| **Starter** (current) | 4 vCPU, 8 GB RAM, 150 GB SSD | 1-3 concurrent users, light tool use |
+| **Growth** | 8 vCPU, 16 GB RAM, 300 GB SSD | 5-10 concurrent users, moderate tool + sandbox use |
+| **Production** | 16 vCPU, 32 GB RAM, 500 GB NVMe | 10-25 concurrent users, heavy sandbox + memory/RAG |
+
+After upgrading the server, update `docker-compose.yml` resource limits:
+
+```bash
+# Growth tier example — adjust to your actual spec
+cat > /tmp/compose-patch.yml << 'EOF'
+services:
+  openclaw:
+    deploy:
+      resources:
+        limits:
+          cpus: "6.0"
+          memory: 10G
+        reservations:
+          memory: 4G
+  openclaw-egress:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+  docker-proxy:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+EOF
+
+# Apply: edit /opt/openclaw/docker-compose.yml with the new limits, then:
+cd /opt/openclaw && docker compose up -d
+```
+
+Update sandbox resource caps to take advantage of the larger host:
+
+```bash
+docker exec -it openclaw sh
+
+# Allow sandbox containers more headroom on a bigger box
+openclaw config set agents.defaults.sandbox.docker.memoryLimit "1g"
+openclaw config set agents.defaults.sandbox.docker.cpuLimit "1.0"
+openclaw config set agents.defaults.sandbox.docker.pidsLimit 512
+
+exit
+docker compose restart openclaw
+```
+
+Update system tuning for higher connection counts:
+
+```bash
+cat > /etc/sysctl.d/99-openclaw.conf << 'EOF'
+vm.swappiness = 10
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+net.core.somaxconn = 4096
+net.ipv4.tcp_max_syn_backlog = 4096
+EOF
+
+sysctl --system
+```
+
+#### 14.2 Phase 2 — Tune Cost Controls and Externalize Backups
+
+LiteLLM is already deployed as part of the base stack (Step 3). Before scaling OpenClaw instances, tune the cost controls and externalize backups.
+
+**Tune LiteLLM spend caps** based on actual usage patterns:
+
+```bash
+# Review current spend via LiteLLM logs
+docker logs openclaw-litellm --tail 100 | grep budget
+
+# Edit /opt/openclaw/config/litellm-config.yaml to adjust:
+#   max_budget: per-model monthly spend cap (USD)
+#   rpm: requests per minute limit
+#   tpm: tokens per minute limit (add if needed)
+
+# After editing:
+docker compose restart litellm
+```
+
+**Add provider fallback routing** for resilience:
+
+```yaml
+# In /opt/openclaw/config/litellm-config.yaml, add fallback models:
+model_list:
+  - model_name: "anthropic/claude-opus-4-6"
+    litellm_params:
+      model: "claude-opus-4-6"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+  - model_name: "anthropic/claude-opus-4-6"
+    litellm_params:
+      model: "claude-sonnet-4-5-20250929"    # fallback to Sonnet if Opus is rate-limited
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
+router_settings:
+  routing_strategy: "usage-based-routing-v2"
+  enable_pre_call_checks: true
+```
+
+**Externalize backups to object storage** (reduces local disk pressure):
+
+```bash
+# Add to /opt/openclaw/monitoring/backup.sh, inside the flock block:
+# Backblaze B2 (~$3/month for 500 GB):
+#   b2 sync /opt/openclaw/monitoring/backups/ b2://your-bucket/openclaw-backups/
+# AWS S3:
+#   aws s3 sync /opt/openclaw/monitoring/backups/ s3://your-bucket/openclaw-backups/
+```
+
+#### 14.3 Phase 3 — Multi-Instance with Telegram Bot Partitioning
+
+OpenClaw's Gateway is a singleton per channel connection — each Telegram bot token maintains one long-poll connection from one Gateway. You cannot run two replicas behind a load balancer and have them both serve the same bot.
+
+The scaling pattern is **bot partitioning**: create multiple Telegram bots (via @BotFather), each with its own OpenClaw instance. Partition by user group, purpose, or tenant.
+
+```
+                    ┌──────────────────────────────────┐
+                    │         Cloudflare (WAF + CDN)    │
+                    └──────────────┬───────────────────┘
+                                   │
+                    ┌──────────────▼───────────────────┐
+                    │     Caddy (reverse proxy)         │
+                    │  path-based routing + sticky sess  │
+                    └──┬───────────────────────────┬───┘
+                       │                           │
+          ┌────────────▼──────────┐   ┌────────────▼──────────┐
+          │   openclaw-primary    │   │   openclaw-secondary   │
+          │   @YourMainBot        │   │   @YourTeamBot         │
+          │   Web UI (sticky)     │   │   (internal / team)    │
+          └───────────┬───────────┘   └───────────┬────────────┘
+                      │                           │
+          ┌───────────▼───────────────────────────▼───┐
+          │           Shared infrastructure            │
+          │  docker-proxy, openclaw-egress, litellm    │
+          └────────────────────────────────────────────┘
+```
+
+**Example partitioning strategies:**
+
+| Strategy | Primary Bot | Secondary Bot |
+|----------|------------|---------------|
+| **Public / internal** | External users, DM-paired | Team members, unrestricted |
+| **By function** | General assistant | Code review / DevOps tasks |
+| **By tenant** | Client A | Client B |
+
+**Implementation:**
+
+1. Create a second Telegram bot via [@BotFather](https://t.me/BotFather) to get a second bot token.
+
+2. Add a second OpenClaw service and data volume:
+
+```bash
+# Add to /opt/openclaw/docker-compose.yml:
+cat >> /opt/openclaw/docker-compose.yml << 'SECONDARY_EOF'
+
+  openclaw-secondary:
+    image: openclaw/openclaw:2026.2.15
+    container_name: openclaw-secondary
+    environment:
+      DOCKER_HOST: tcp://openclaw-docker-proxy:2375
+      HTTP_PROXY: http://openclaw-egress:3128
+      HTTPS_PROXY: http://openclaw-egress:3128
+      NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
+      OPENCLAW_DISABLE_BONJOUR: "1"
+    volumes:
+      - openclaw-data-secondary:/root/.openclaw
+    networks:
+      - openclaw-net
+      - proxy-net
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+      openclaw-egress:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "openclaw", "doctor", "--quiet"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          memory: 2G
+    restart: unless-stopped
+SECONDARY_EOF
+
+# Add the secondary data volume:
+# Under the volumes: key in docker-compose.yml, add:
+#   openclaw-data-secondary:
+```
+
+3. Apply the same hardening to the secondary instance (repeat Step 5 targeting `openclaw-secondary`).
+
+4. Configure each instance with its own Telegram bot:
+
+```bash
+# Primary: main bot
+docker exec -it openclaw sh
+openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
+openclaw config set channels.telegram.token "YOUR_PRIMARY_BOT_TOKEN"
+exit
+
+# Secondary: team/internal bot
+docker exec -it openclaw-secondary sh
+openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
+openclaw config set channels.telegram.token "YOUR_SECONDARY_BOT_TOKEN"
+exit
+
+docker compose up -d
+```
+
+5. Update Caddy for path-based routing to each instance's Web UI:
+
+```
+openclaw.yourdomain.com {
+    # Primary instance — default route + Web UI
+    handle /api/* {
+        reverse_proxy openclaw:3000 {
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Secondary instance — separate API namespace
+    handle /secondary/api/* {
+        uri strip_prefix /secondary
+        reverse_proxy openclaw-secondary:3000 {
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Default: primary Web UI
+    reverse_proxy openclaw:3000
+}
+```
+
+> **State isolation**: Each instance has its own data volume, memory index, session transcripts, and SOUL.md. Users messaging @YourMainBot see different conversation history than users messaging @YourTeamBot. Each instance can have different SOUL.md personalities, tool permissions, and hardening levels — e.g., the team bot could allow more tools while the public bot stays locked down. If you need shared memory across instances, you would need to externalize the vector store (PostgreSQL + pgvector, or a hosted vector DB) — OpenClaw does not natively support this yet.
+
+#### 14.4 Phase 4 — Docker Swarm Migration
+
+When you outgrow a single host entirely — because you need node-level fault tolerance, encrypted overlay networks, or CapRover's orchestration dashboard — migrate to the Swarm architecture documented in [SWARM.md](SWARM.md).
+
+Key differences from the single-server deployment:
+
+| Concern | Single-Server (This Guide) | Swarm (SWARM.md) |
+|---------|---------------------------|-------------------|
+| Orchestration | Docker Compose v2 | CapRover on Docker Swarm |
+| Network | Bridge (internal) | Encrypted overlay (IPSEC) |
+| Service discovery | Container names | `srv-captain--<name>` DNS |
+| Placement | Implicit (one host) | Explicit constraints (`openclaw.trusted=true`) |
+| Resource limits | `deploy` block in Compose | Service Update Overrides (JSON) |
+| Secrets | File-based (`.env`) | Docker Swarm secrets |
+| HA/DR | Manual (Step 13) | Standby node failover (SWARM.md §14) |
+| NFS | Not needed | Required for CapRover HA |
+
+**Migration path:**
+
+1. Provision the Swarm nodes (SWARM.md Steps 1-6)
+2. Back up the current `openclaw-data` volume (Step 11 of this guide)
+3. Deploy services to Swarm (SWARM.md Steps 7-9)
+4. Restore the data volume to the Swarm's `openclaw-data` volume
+5. Apply Service Update Overrides (SWARM.md Step 10.1)
+6. Re-apply hardening and channel config (SWARM.md Steps 10.2-10.5)
+7. Update Cloudflare DNS to the Swarm leader's IP
+8. Decommission the single server
+
+> **Important**: The Swarm deployment also pins all services to one trusted node. Swarm adds fault tolerance (automatic rescheduling if the trusted node fails) and encrypted inter-node traffic, but does not add horizontal compute capacity for the OpenClaw Gateway itself. True horizontal scaling still requires channel partitioning (Phase 3) within the Swarm.
+
+#### 14.5 Scaling Decision Matrix
+
+| Signal | Action |
+|--------|--------|
+| Response times increasing, sandbox queuing | Phase 1: Upgrade VPS |
+| LLM API costs unpredictable or growing fast | Phase 2: Tune LiteLLM spend caps and routing |
+| Need separate bots for different user groups | Phase 3: Telegram bot partitioning |
+| Need per-user data isolation (compliance) | Phase 3: Separate instances per tenant |
+| Need node-level fault tolerance | Phase 4: Swarm migration |
+| Need zero-downtime deployments | Phase 4: Swarm with rolling updates |
+
 ---
 
-**Done.** Deploy with `docker compose up -d` (Step 4), apply hardening (Step 5), configure API keys and channels (Steps 6-7), set up your reverse proxy (Step 9), verify (Step 10), then configure backups (Step 11).
+**Done.** Deploy with `docker compose up -d` (Step 4), apply hardening (Step 5), configure API keys and channels (Steps 6-7), set up your reverse proxy (Step 9), verify (Step 10), then configure backups (Step 11). When you hit capacity limits, follow the scaling phases in Step 14.
