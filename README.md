@@ -23,29 +23,25 @@ The [Swarm deployment guide](README.md) pins all three services to a single trus
                                  │ HTTPS
                   ┌──────────────▼──────────────────────┐
                   │     Caddy / Nginx (reverse proxy)    │
+                  │         [proxy-net]                   │
                   └──────────────┬──────────────────────┘
-                                 │ proxy-net
+                                 │
           ┌──────────────────────┼──────────────────────┐
           │                      │                      │
-  ┌───────▼───────┐   ┌─────────▼────────┐             │
-  │ docker-proxy  │   │  openclaw (gw)   │             │
-  │ (socket proxy)│   │  (main service)  │             │
-  └───────────────┘   └────────┬─────────┘             │
-          │                    │                        │
-          ▼                    ▼ openclaw-net            │
-   /var/run/docker.sock  ┌─────────────┐    ┌──────────▼────────┐
-   (read-only)           │   LiteLLM   │    │ openclaw-egress   │
-                         │ (model proxy)│    │ (Squid proxy)     │
-                         └──────┬──────┘    └──────────┬────────┘
-                                │                      │
-                                └──────────┬───────────┘
-                                           ▼
-                                    LLM API whitelist
-                                    (.anthropic.com,
-                                     .openai.com)
+  ┌───────▼───────┐   ┌─────────▼────────┐   ┌────────▼────────┐
+  │ docker-proxy  │   │  openclaw (gw)   │   │ openclaw-egress │
+  │ (socket proxy)│   │  (main service)  │   │ (Squid proxy)   │
+  │ [openclaw-net]│   │ [openclaw-net +  │   │ [openclaw-net + │
+  └───────────────┘   │  proxy-net]      │   │  egress-net]    │
+          │           └──────────────────┘   └────────┬────────┘
+          ▼                      │                    │
+   /var/run/docker.sock    openclaw-data vol          ▼
+   (read-only)             (/root/.openclaw)    LLM API whitelist
+                                                (.anthropic.com,
+                                                 .openai.com)
 ```
 
-All services communicate over an **internal bridge network** (`openclaw-net`) — traffic never leaves the host. LiteLLM proxies all LLM API requests through Squid egress, providing rate limiting, cost controls, and centralized API key management.
+Three bridge networks enforce least-privilege communication. `openclaw-net` is **internal** — no internet access. The egress proxy bridges internal and external via `egress-net`. The reverse proxy reaches the gateway via `proxy-net`. Traffic never leaves the host between services, so no IPSEC encryption is needed.
 
 ## Table of Contents
 
@@ -353,6 +349,7 @@ services:
       - ./config/squid.conf:/etc/squid/squid.conf:ro
     networks:
       - openclaw-net
+      - egress-net
     healthcheck:
       test: ["CMD-SHELL", "squidclient -h localhost mgr:info 2>&1 | grep -q 'Squid Object Cache' || exit 1"]
       interval: 30s
@@ -371,13 +368,20 @@ networks:
     internal: true
   proxy-net:
     driver: bridge
+  egress-net:
+    driver: bridge
 
 volumes:
   openclaw-data:
 COMPOSE_EOF
 ```
 
-> **Network design**: `openclaw-net` is an **internal** bridge — containers on it cannot reach the internet directly. Only `openclaw-egress` (Squid) can route outbound HTTPS to whitelisted domains. LiteLLM routes all LLM API traffic through Squid automatically via `HTTP_PROXY`/`HTTPS_PROXY`. The `openclaw` service also joins `proxy-net` so the reverse proxy (Step 9) can reach the gateway without exposing the internal network.
+> **Network design**: Three networks enforce least-privilege communication:
+> - **`openclaw-net`** (`internal: true`) — inter-service traffic only; containers cannot reach the internet.
+> - **`proxy-net`** — reverse proxy (Step 9) reaches the gateway without joining the internal network.
+> - **`egress-net`** — gives `openclaw-egress` (Squid) a route to the internet for whitelisted LLM API domains.
+>
+> The `openclaw` service is on `openclaw-net` + `proxy-net`. The egress proxy is on `openclaw-net` + `egress-net`. The docker-proxy stays on `openclaw-net` only — fully isolated.
 
 ### Step 4: Deploy
 
@@ -493,6 +497,8 @@ openclaw config set agents.defaults.sandbox.docker.capDrop '["ALL"]'
 openclaw config set agents.defaults.sandbox.docker.memoryLimit "512m"
 openclaw config set agents.defaults.sandbox.docker.cpuLimit "0.5"
 openclaw config set agents.defaults.sandbox.docker.pidsLimit 256
+# Limit concurrent sandboxes: 3 × 512M = 1.5G max sandbox memory on 8 GB host
+openclaw config set agents.defaults.sandbox.docker.maxConcurrent 3
 
 # ── Tool Denials ─────────────────────────────────────────────────────
 openclaw config set agents.defaults.tools.deny '["process", "browser", "nodes", "gateway", "sessions_spawn", "sessions_send", "elevated", "host_exec", "docker", "camera", "canvas", "cron"]'
@@ -636,13 +642,16 @@ The `openclaw` container is accessible on `proxy-net` but not directly from the 
 ```bash
 cat > /opt/openclaw/Caddyfile << 'EOF'
 openclaw.yourdomain.com {
-    reverse_proxy openclaw:3000
+    reverse_proxy openclaw:18789
 }
 EOF
+```
 
-# Add Caddy to docker-compose.yml
-cat >> /opt/openclaw/docker-compose.yml << 'EOF'
+Create a Compose override file for Caddy (keeps the base `docker-compose.yml` clean):
 
+```bash
+cat > /opt/openclaw/compose.caddy.yml << 'EOF'
+services:
   caddy:
     image: caddy:2-alpine
     container_name: openclaw-caddy
@@ -656,39 +665,55 @@ cat >> /opt/openclaw/docker-compose.yml << 'EOF'
     networks:
       - proxy-net
     restart: unless-stopped
+
+networks:
+  proxy-net:
+    external: true
+    name: openclaw_proxy-net
+
+volumes:
+  caddy-data:
+  caddy-config:
 EOF
 
-# Add Caddy volumes to the volumes section
-# Edit /opt/openclaw/docker-compose.yml and add under the volumes: key:
-#   caddy-data:
-#   caddy-config:
-
-docker compose up -d caddy
+docker compose -f docker-compose.yml -f compose.caddy.yml up -d
 ```
+
+> **Why a separate file?** Appending YAML with `cat >>` breaks the document structure. A Compose override file (`-f`) is the idiomatic way to layer services. The `proxy-net` is declared `external` so it references the network already created by the base compose file.
 
 #### Option B: Cloudflare Tunnel (Maximum Security — No Open Ports)
 
 With a Cloudflare Tunnel, you can remove ports 80/443 from UFW entirely. Traffic routes through Cloudflare's network directly to the container.
 
 ```bash
-# Add tunnel to docker-compose.yml
-cat >> /opt/openclaw/docker-compose.yml << 'EOF'
-
+cat > /opt/openclaw/compose.tunnel.yml << 'EOF'
+services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2025.2.1
     container_name: openclaw-tunnel
     command: tunnel run
     environment:
-      TUNNEL_TOKEN: "YOUR_TUNNEL_TOKEN"
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
     networks:
       - proxy-net
     restart: unless-stopped
+
+networks:
+  proxy-net:
+    external: true
+    name: openclaw_proxy-net
 EOF
 
-docker compose up -d cloudflared
+# Store tunnel token in .env (not in the compose file)
+echo 'TUNNEL_TOKEN=YOUR_TUNNEL_TOKEN' >> /opt/openclaw/.env
+chmod 600 /opt/openclaw/.env
+
+docker compose -f docker-compose.yml -f compose.tunnel.yml up -d
 ```
 
-Configure the tunnel in Cloudflare dashboard to route `openclaw.yourdomain.com` to `http://openclaw:3000`.
+Configure the tunnel in Cloudflare dashboard to route `openclaw.yourdomain.com` to `http://openclaw:18789`.
+
+> **Security note**: The tunnel token is loaded from `.env` via variable substitution — not hardcoded in the compose file. Pin the `cloudflared` image version; `latest` tags can introduce breaking changes.
 
 ### Step 10: Verification
 
@@ -715,6 +740,10 @@ docker stats --no-stream
 docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness
 # Model list (should show configured models)
 docker exec openclaw wget -qO- http://openclaw-litellm:4000/models
+# ── Resource Limits ──
+# Budget: 4G openclaw + 128M proxy + 128M squid + 3×512M sandboxes = 5.8G
+# Remaining ~2.2G covers: OS (~1G), Docker daemon (~300M), reverse proxy
+docker stats --no-stream
 
 # ── Network Connectivity ─────────────────────────────────────────────
 # Egress proxy — whitelisted domains (should succeed)
@@ -787,8 +816,8 @@ LOG="/opt/openclaw/monitoring/logs/backup-$(date +%F-%H%M).log"
     echo "WARNING: No encryption key — backups stored unencrypted" >> "$LOG"
   fi
 
-  # Security audit
-  docker exec openclaw openclaw security audit --deep --fix >> "$LOG" 2>&1
+  # Security audit (report only — never auto-fix in unattended cron)
+  docker exec openclaw openclaw security audit --deep >> "$LOG" 2>&1
 
   # Health check
   docker exec openclaw openclaw doctor >> "$LOG" 2>&1
