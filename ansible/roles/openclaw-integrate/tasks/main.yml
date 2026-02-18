@@ -14,11 +14,31 @@
     "{{ openclaw_default_model }}"
   changed_when: false
 
-- name: Write Voyage API key into container .env
+- name: Write Voyage API key to host tempfile
+  ansible.builtin.copy:
+    content: "VOYAGE_API_KEY={{ voyage_api_key }}"
+    dest: "{{ openclaw_base_dir }}/monitoring/.voyage-env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Copy Voyage API key into container
+  ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.voyage-env openclaw:/tmp/.voyage-env
+  changed_when: false
+  no_log: true
+
+- name: Install Voyage API key into container .env
   ansible.builtin.command: >
     docker exec openclaw sh -c
-    'echo "VOYAGE_API_KEY={{ voyage_api_key }}" > /root/.openclaw/.env && chmod 600 /root/.openclaw/.env'
+    'cat /tmp/.voyage-env > /root/.openclaw/.env && chmod 600 /root/.openclaw/.env && rm -f /tmp/.voyage-env'
   changed_when: false
+  no_log: true
+
+- name: Remove Voyage API key tempfile from host
+  ansible.builtin.file:
+    path: "{{ openclaw_base_dir }}/monitoring/.voyage-env"
+    state: absent
   no_log: true
 
 # ── Step 7: Channel Integration (Telegram) ───────────────────────────
@@ -54,6 +74,14 @@
   changed_when: false
   failed_when: false
 
+- name: Show memory index build output on failure
+  ansible.builtin.debug:
+    msg: |
+      Memory index build failed (rc={{ memory_index.rc }}).
+      stdout: {{ memory_index.stdout | default('') }}
+      stderr: {{ memory_index.stderr | default('') }}
+  when: memory_index.rc != 0
+
 - name: Verify memory index
   ansible.builtin.command: docker exec openclaw openclaw memory index --verify
   register: memory_verify
@@ -63,6 +91,11 @@
 - name: Show memory index status
   ansible.builtin.debug:
     msg: "Memory index: {{ 'OK' if memory_verify.rc == 0 else 'FAILED — check Voyage API key and Squid whitelist' }}"
+
+- name: Fail if memory index verification failed
+  ansible.builtin.fail:
+    msg: "Memory index verification failed. Check Voyage API key, Squid egress whitelist (.voyageai.com), and container logs."
+  when: memory_verify.rc != 0
 
 # ── Restart to apply all integration config ───────────────────────────
 - name: Restart OpenClaw to apply integration config

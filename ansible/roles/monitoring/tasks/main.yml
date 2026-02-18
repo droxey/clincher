@@ -40,16 +40,16 @@
     - "grafana/grafana-oss:{{ grafana_version }}"
     - "oliver006/redis_exporter:{{ redis_exporter_version }}"
 
-- name: Determine compose files list
+- name: Build compose file arguments
   ansible.builtin.set_fact:
     compose_files: >-
       -f docker-compose.yml
       -f compose.monitoring.yml
-      {% if reverse_proxy == 'caddy' %}-f compose.caddy.yml{% endif %}
-      {% if reverse_proxy == 'tunnel' %}-f compose.tunnel.yml{% endif %}
+      {{ '-f compose.caddy.yml' if reverse_proxy == 'caddy' else '' }}
+      {{ '-f compose.tunnel.yml' if reverse_proxy == 'tunnel' else '' }}
 
 - name: Start stack with monitoring overlay
-  ansible.builtin.command: "docker compose {{ compose_files }} up -d"
+  ansible.builtin.command: "docker compose {{ compose_files | trim }} up -d"
   args:
     chdir: "{{ openclaw_base_dir }}"
 

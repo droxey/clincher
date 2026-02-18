@@ -50,7 +50,7 @@
     name: "OpenClaw daily backup"
     minute: "{{ backup_cron_minute }}"
     hour: "{{ backup_cron_hour }}"
-    job: "{{ openclaw_base_dir }}/monitoring/backup.sh 2>/dev/null"
+    job: "{{ openclaw_base_dir }}/monitoring/backup.sh >> {{ openclaw_base_dir }}/monitoring/logs/cron.log 2>&1"
     user: root
 
 - name: Schedule monthly token rotation
@@ -59,14 +59,14 @@
     minute: "0"
     hour: "{{ token_rotation_hour }}"
     day: "{{ token_rotation_day }}"
-    job: "{{ openclaw_base_dir }}/monitoring/rotate-token.sh 2>/dev/null"
+    job: "{{ openclaw_base_dir }}/monitoring/rotate-token.sh >> {{ openclaw_base_dir }}/monitoring/logs/cron.log 2>&1"
     user: root
 
 - name: Schedule watchdog health checks
   ansible.builtin.cron:
     name: "OpenClaw watchdog"
     minute: "*/{{ watchdog_interval }}"
-    job: "{{ openclaw_base_dir }}/monitoring/watchdog.sh 2>/dev/null"
+    job: "{{ openclaw_base_dir }}/monitoring/watchdog.sh >> {{ openclaw_base_dir }}/monitoring/logs/cron.log 2>&1"
     user: root
 
 - name: Schedule weekly backup verification
@@ -75,7 +75,7 @@
     minute: "30"
     hour: "{{ backup_cron_hour }}"
     weekday: "0"
-    job: "{{ openclaw_base_dir }}/monitoring/verify-backup.sh 2>/dev/null"
+    job: "{{ openclaw_base_dir }}/monitoring/verify-backup.sh >> {{ openclaw_base_dir }}/monitoring/logs/cron.log 2>&1"
     user: root
 
 # ── Unattended Security Upgrades (§13.3) ─────────────────────────────

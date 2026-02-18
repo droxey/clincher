@@ -13,6 +13,46 @@
   become: true
 
   pre_tasks:
+    - name: Validate required variables
+      tags: [always]
+      block:
+        - name: Ensure LLM provider API key is configured
+          ansible.builtin.assert:
+            that:
+              - anthropic_api_key is defined
+              - anthropic_api_key | length > 0
+              - anthropic_api_key != 'sk-ant-your-key-here'
+            fail_msg: "anthropic_api_key must be set in vault.yml (not the placeholder value)"
+
+        - name: Ensure Voyage API key is configured
+          ansible.builtin.assert:
+            that:
+              - voyage_api_key is defined
+              - voyage_api_key | length > 0
+              - voyage_api_key != 'pa-your-key-here'
+            fail_msg: "voyage_api_key must be set in vault.yml (not the placeholder value)"
+
+        - name: Ensure tunnel token is set when using Cloudflare Tunnel
+          ansible.builtin.assert:
+            that:
+              - tunnel_token is defined
+              - tunnel_token | length > 0
+              - tunnel_token != 'YOUR_TUNNEL_TOKEN'
+            fail_msg: "tunnel_token must be set in vault.yml when reverse_proxy is 'tunnel'"
+          when: reverse_proxy == 'tunnel'
+
+        - name: Ensure admin_ip is configured
+          ansible.builtin.assert:
+            that:
+              - admin_ip != 'YOUR_STATIC_IP'
+            fail_msg: "admin_ip must be set to your actual IP in vars.yml"
+
+        - name: Ensure domain is configured
+          ansible.builtin.assert:
+            that:
+              - domain != 'openclaw.yourdomain.com'
+            fail_msg: "domain must be set to your actual domain in vars.yml"
+
     - name: Generate secrets that were left empty
       tags: [always]
       block:

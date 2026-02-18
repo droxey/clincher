@@ -35,7 +35,6 @@
     owner: root
     group: root
     mode: "0644"
-    validate: "sshd -t -f %s"
   notify: reload ssh
 
 # ── Docker Installation ───────────────────────────────────────────────
@@ -128,13 +127,21 @@
   ansible.builtin.uri:
     url: https://www.cloudflare.com/ips-v4
     return_content: true
+    timeout: 30
   register: cf_ipv4
+  retries: 3
+  delay: 5
+  until: cf_ipv4 is not failed
 
 - name: Fetch Cloudflare IPv6 ranges
   ansible.builtin.uri:
     url: https://www.cloudflare.com/ips-v6
     return_content: true
+    timeout: 30
   register: cf_ipv6
+  retries: 3
+  delay: 5
+  until: cf_ipv6 is not failed
   when: not (disable_ipv6 | bool)
 
 - name: Allow Cloudflare IPv4 ingress on 80,443
@@ -144,6 +151,7 @@
     to_port: "80,443"
     proto: tcp
   loop: "{{ cf_ipv4.content.split('\n') | select('match', '.+') | list }}"
+  when: cf_ipv4 is succeeded
 
 - name: Allow Cloudflare IPv6 ingress on 80,443
   community.general.ufw:
@@ -152,7 +160,7 @@
     to_port: "80,443"
     proto: tcp
   loop: "{{ cf_ipv6.content.split('\n') | select('match', '.+') | list }}"
-  when: not (disable_ipv6 | bool)
+  when: not (disable_ipv6 | bool) and cf_ipv6 is succeeded
 
 - name: Enable UFW
   community.general.ufw:

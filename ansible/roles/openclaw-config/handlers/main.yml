@@ -8,3 +8,8 @@
   ansible.builtin.command: docker compose restart litellm
   args:
     chdir: "{{ openclaw_base_dir }}"
+
+- name: restart openclaw
+  ansible.builtin.command: docker compose restart openclaw
+  args:
+    chdir: "{{ openclaw_base_dir }}"

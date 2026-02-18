@@ -21,4 +21,5 @@ telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
 # tunnel_token: "YOUR_TUNNEL_TOKEN"
 
 # ── Monitoring (if monitoring_enabled: true) ─────────────────────────
-# grafana_admin_password: ""
+# Leave empty — playbook auto-generates if not set
+grafana_admin_password: ""

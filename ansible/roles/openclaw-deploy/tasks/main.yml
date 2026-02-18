@@ -52,3 +52,15 @@
   args:
     chdir: "{{ openclaw_base_dir }}"
   when: squid_acl_tightened is changed
+
+# ── Discover proxy-net subnet for trustedProxies (used by harden role) ─
+- name: Get proxy-net subnet
+  ansible.builtin.command: >
+    docker network inspect openclaw_proxy-net
+    --format '{{ '{{' }}range .IPAM.Config{{ '}}' }}{{ '{{' }}.Subnet{{ '}}' }}{{ '{{' }}end{{ '}}' }}'
+  register: proxy_subnet_result
+  changed_when: false
+
+- name: Store proxy-net subnet as fact
+  ansible.builtin.set_fact:
+    proxy_net_subnet: "{{ proxy_subnet_result.stdout }}"

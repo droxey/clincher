@@ -13,9 +13,15 @@ LOG="{{ openclaw_base_dir }}/monitoring/logs/backup-$(date +%F-%H%M).log"
     -v {{ openclaw_base_dir }}/monitoring/backups:/backup \
     alpine:3.21 tar -czf "/backup/openclaw-data-$(date +%F).tar.gz" -C /source . 2>> "$LOG"
 
-  # Backup config files
+  # Backup config files (build file list dynamically — Caddyfile may not exist)
+  CONFIG_FILES="config/ docker-compose.yml .env"
+  [ -f "{{ openclaw_base_dir }}/Caddyfile" ] && CONFIG_FILES="$CONFIG_FILES Caddyfile"
+  [ -f "{{ openclaw_base_dir }}/compose.caddy.yml" ] && CONFIG_FILES="$CONFIG_FILES compose.caddy.yml"
+  [ -f "{{ openclaw_base_dir }}/compose.tunnel.yml" ] && CONFIG_FILES="$CONFIG_FILES compose.tunnel.yml"
+  [ -f "{{ openclaw_base_dir }}/compose.monitoring.yml" ] && CONFIG_FILES="$CONFIG_FILES compose.monitoring.yml"
+  # shellcheck disable=SC2086
   tar -czf "{{ openclaw_base_dir }}/monitoring/backups/openclaw-config-$(date +%F).tar.gz" \
-    -C {{ openclaw_base_dir }} config/ docker-compose.yml .env Caddyfile 2>> "$LOG" || true
+    -C {{ openclaw_base_dir }} $CONFIG_FILES 2>> "$LOG"
 
   # Encrypt backups at rest
   ENCRYPTION_KEY_FILE="{{ openclaw_base_dir }}/monitoring/.backup-encryption-key"

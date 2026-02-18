@@ -1,6 +1,12 @@
 ---
 # Step 9: Reverse proxy setup (Caddy, Cloudflare Tunnel, or Tailscale)
 
+# Check if monitoring compose exists (avoids tearing down monitoring on re-runs)
+- name: Check if monitoring compose overlay exists
+  ansible.builtin.stat:
+    path: "{{ openclaw_base_dir }}/compose.monitoring.yml"
+  register: monitoring_compose_file
+
 # ── Option A: Caddy ───────────────────────────────────────────────────
 - name: Deploy Caddy reverse proxy
   when: reverse_proxy == 'caddy'
@@ -28,7 +34,9 @@
 
     - name: Start stack with Caddy overlay
       ansible.builtin.command: >
-        docker compose -f docker-compose.yml -f compose.caddy.yml up -d
+        docker compose -f docker-compose.yml -f compose.caddy.yml
+        {{ '-f compose.monitoring.yml' if monitoring_compose_file.stat.exists else '' }}
+        up -d
       args:
         chdir: "{{ openclaw_base_dir }}"
 
@@ -51,7 +59,9 @@
 
     - name: Start stack with Tunnel overlay
       ansible.builtin.command: >
-        docker compose -f docker-compose.yml -f compose.tunnel.yml up -d
+        docker compose -f docker-compose.yml -f compose.tunnel.yml
+        {{ '-f compose.monitoring.yml' if monitoring_compose_file.stat.exists else '' }}
+        up -d
       args:
         chdir: "{{ openclaw_base_dir }}"
 
