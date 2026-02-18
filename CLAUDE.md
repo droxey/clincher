@@ -104,7 +104,7 @@ The `README.md` (single-server guide) follows a strict 14-step deployment sequen
 10. **Verification** — Security audit, health checks, connectivity tests
 11. **Maintenance** — Backup scripts, token rotation, cron
 12. **Troubleshooting** — Symptom/diagnostic/fix table
-13. **Disaster Recovery** — Recovery objectives, restore procedure
+13. **High Availability and Disaster Recovery** — HA foundations, watchdog monitoring, unattended updates, external uptime checks, backup verification, recovery procedure, warm standby, DR drills
 14. **Scaling** — Vertical scaling, LiteLLM proxy, channel partitioning, Swarm migration
 
 **Deployment order matters**: The Compose file defines `depends_on` with health conditions, so `docker compose up -d` handles service ordering automatically. Hardening (Step 5) must be applied before exposing the gateway to traffic (Step 9).

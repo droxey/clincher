@@ -57,7 +57,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 - [Step 10: Verification](#step-10-verification)
 - [Step 11: Maintenance](#step-11-maintenance)
 - [Step 12: Troubleshooting](#step-12-troubleshooting)
-- [Step 13: Disaster Recovery](#step-13-disaster-recovery)
+- [Step 13: High Availability and Disaster Recovery](#step-13-high-availability-and-disaster-recovery)
 - [Step 14: Scaling](#step-14-scaling)
 
 ---
@@ -910,18 +910,330 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Container OOM-killed | `dmesg \| grep -i oom`, `docker inspect <container> --format '{{.State.OOMKilled}}'` | Check `docker stats` — on 8 GB host, total container limits must stay under ~4.5G. Reduce `maxTokens` or concurrent sandbox count if openclaw peaks |
 | High swap usage | `free -h`, `vmstat 1 5` | If swap > 1 GB consistently, reduce `agents.defaults.sandbox.docker.memoryLimit` or lower openclaw memory limit to 3G |
 
-### Step 13: Disaster Recovery
+### Step 13: High Availability and Disaster Recovery
 
-Since all data lives on one host, DR is: restore to a new server and redeploy.
+A single-instance deployment cannot achieve true HA through redundancy — there is no second node to failover to. Instead, HA here means **maximizing uptime on one host**: automated health monitoring, fast self-healing, proactive disk/memory alerting, and OS-level hardening that prevents the most common causes of unplanned downtime. DR covers everything after the host itself is lost.
 
-#### 13.1 Recovery Objectives
+#### 13.1 HA Foundations (Already Configured)
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| **RTO** | **30 minutes** | Provision new VPS + restore backup + `docker compose up` |
-| **RPO** | **24 hours** | Limited by daily backup schedule. Reduce by increasing cron frequency. |
+Steps 1 and 3 established these HA building blocks. This section explains **why** they matter and how they interact — no new configuration needed.
 
-#### 13.2 Recovery Procedure
+| Foundation | Where | What It Does |
+|------------|-------|-------------|
+| `live-restore: true` | Step 1 (`daemon.json`) | Containers keep running during Docker daemon restarts (upgrades, crashes). Without this, a `systemctl restart docker` kills every container. |
+| `restart: unless-stopped` | Step 3 (Compose) | Docker automatically restarts crashed containers. Only stops restarting if you explicitly `docker compose stop`. |
+| Healthchecks | Step 3 (Compose) | Docker marks containers `unhealthy` after 3 failed checks. Combined with `restart`, this triggers auto-recovery for hung processes. |
+| Log rotation | Step 1 (`daemon.json`) | 3 × 10 MB log files per container. Prevents container logs from filling the disk — the #1 cause of silent single-server outages. |
+
+> **Gap these don't cover**: Docker restarts crashed containers, but it doesn't alert you. A container can restart-loop for hours before you notice. The watchdog script (§13.2) fills this gap.
+
+#### 13.2 Health Monitoring Watchdog
+
+This script runs every 5 minutes via cron, checks all four service containers, and alerts on unhealthy state or restart loops. It catches problems that Docker's built-in restart policy handles silently.
+
+```bash
+cat > /opt/openclaw/monitoring/watchdog.sh << 'SCRIPT_EOF'
+#!/bin/bash
+set -euo pipefail
+
+LOG="/opt/openclaw/monitoring/logs/watchdog.log"
+ALERT_FILE="/opt/openclaw/monitoring/.last-alert"
+ALERT_COOLDOWN=1800  # seconds — don't re-alert for the same issue within 30 min
+
+CONTAINERS=("openclaw" "openclaw-docker-proxy" "openclaw-egress" "openclaw-litellm")
+RESTART_THRESHOLD=3   # alert if a container has restarted more than this many times
+DISK_THRESHOLD=85     # alert if disk usage exceeds this percentage
+MEMORY_THRESHOLD=90   # alert if memory usage exceeds this percentage
+
+alert() {
+  local msg="$1"
+  local now
+  now=$(date +%s)
+
+  # Cooldown: skip if we alerted for the same message recently
+  if [ -f "$ALERT_FILE" ]; then
+    local last_alert last_msg
+    last_alert=$(head -1 "$ALERT_FILE" 2>/dev/null || echo 0)
+    last_msg=$(tail -1 "$ALERT_FILE" 2>/dev/null || echo "")
+    if [ "$last_msg" = "$msg" ] && [ $((now - last_alert)) -lt $ALERT_COOLDOWN ]; then
+      return 0
+    fi
+  fi
+
+  echo "$now" > "$ALERT_FILE"
+  echo "$msg" >> "$ALERT_FILE"
+  echo "[ALERT $(date '+%F %T')] $msg" >> "$LOG"
+
+  # ── Notification dispatch ──────────────────────────────────────────
+  # Uncomment ONE of these blocks based on your alerting setup.
+
+  # Option 1: Telegram (uses the same bot — sends DM to your chat ID)
+  # TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN"
+  # TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
+  # curl -sf "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  #   -d chat_id="$TELEGRAM_CHAT_ID" \
+  #   -d text="🚨 OpenClaw Alert: ${msg}" \
+  #   -d parse_mode="Markdown" > /dev/null 2>&1
+
+  # Option 2: Ntfy (self-hosted or ntfy.sh)
+  # curl -sf -d "$msg" "https://ntfy.sh/your-openclaw-alerts" > /dev/null 2>&1
+
+  # Option 3: Email via msmtp (apt install msmtp msmtp-mta)
+  # echo -e "Subject: OpenClaw Alert\n\n$msg" | msmtp admin@yourdomain.com
+}
+
+# ── Container Health Checks ────────────────────────────────────────
+for ctr in "${CONTAINERS[@]}"; do
+  # Check if container exists and is running
+  if ! docker inspect "$ctr" > /dev/null 2>&1; then
+    alert "$ctr: container not found"
+    continue
+  fi
+
+  status=$(docker inspect "$ctr" --format '{{.State.Status}}')
+  if [ "$status" != "running" ]; then
+    alert "$ctr: status is '$status' (expected 'running')"
+    continue
+  fi
+
+  # Check health status (if healthcheck is defined)
+  health=$(docker inspect "$ctr" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+  if [ "$health" = "unhealthy" ]; then
+    last_log=$(docker inspect "$ctr" --format '{{(index .State.Health.Log 0).Output}}' 2>/dev/null | head -c 200)
+    alert "$ctr: UNHEALTHY — ${last_log:-no healthcheck output}"
+  fi
+
+  # Check restart count
+  restarts=$(docker inspect "$ctr" --format '{{.RestartCount}}')
+  if [ "$restarts" -gt "$RESTART_THRESHOLD" ]; then
+    alert "$ctr: restarted $restarts times (threshold: $RESTART_THRESHOLD)"
+  fi
+
+  # Check if OOM-killed
+  oom=$(docker inspect "$ctr" --format '{{.State.OOMKilled}}')
+  if [ "$oom" = "true" ]; then
+    alert "$ctr: OOM-killed — increase memory limit or reduce load"
+  fi
+done
+
+# ── Disk Usage ─────────────────────────────────────────────────────
+disk_pct=$(df /opt/openclaw --output=pcent | tail -1 | tr -d ' %')
+if [ "$disk_pct" -gt "$DISK_THRESHOLD" ]; then
+  alert "Disk usage at ${disk_pct}% (threshold: ${DISK_THRESHOLD}%)"
+fi
+
+# ── Memory Usage ───────────────────────────────────────────────────
+mem_pct=$(free | awk '/Mem:/ {printf "%.0f", ($3/$2)*100}')
+if [ "$mem_pct" -gt "$MEMORY_THRESHOLD" ]; then
+  alert "Memory usage at ${mem_pct}% (threshold: ${MEMORY_THRESHOLD}%)"
+fi
+
+# ── Swap Pressure ─────────────────────────────────────────────────
+swap_total=$(free -m | awk '/Swap:/ {print $2}')
+swap_used=$(free -m | awk '/Swap:/ {print $3}')
+if [ "$swap_total" -gt 0 ]; then
+  swap_pct=$((swap_used * 100 / swap_total))
+  if [ "$swap_pct" -gt 50 ]; then
+    alert "Swap usage at ${swap_pct}% (${swap_used}M/${swap_total}M) — host under memory pressure"
+  fi
+fi
+
+# ── Log rotation for watchdog itself ───────────────────────────────
+if [ -f "$LOG" ]; then
+  log_lines=$(wc -l < "$LOG")
+  if [ "$log_lines" -gt 10000 ]; then
+    tail -5000 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
+  fi
+fi
+SCRIPT_EOF
+chmod 700 /opt/openclaw/monitoring/watchdog.sh
+```
+
+Add the watchdog to root's crontab alongside the existing backup and rotation jobs:
+
+```bash
+# sudo crontab -e — add this line:
+*/5 * * * * /opt/openclaw/monitoring/watchdog.sh 2>/dev/null
+```
+
+> **Why 5-minute intervals?** Fast enough to catch problems before users report them, slow enough to avoid cron overhead on an 8 GB host. For tighter monitoring, reduce to `*/2` — but ensure the alert cooldown prevents notification floods.
+
+#### 13.3 Unattended Security Updates
+
+The most common cause of single-server compromise isn't a container escape — it's an unpatched kernel or SSH vulnerability on the host. Enable automatic security patches:
+
+```bash
+apt install -y unattended-upgrades apt-listchanges
+
+cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Reboot automatically at 5 AM if a kernel update requires it
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "05:00";
+
+// Email notification (requires msmtp or similar MTA configured)
+// Unattended-Upgrade::Mail "admin@yourdomain.com";
+// Unattended-Upgrade::MailReport "on-change";
+EOF
+
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+systemctl enable unattended-upgrades
+systemctl start unattended-upgrades
+```
+
+> **Why auto-reboot?** `live-restore: true` (Step 1) means containers survive the Docker daemon restart that follows a kernel update. The 5 AM reboot window minimizes user impact. If you prefer manual control, set `Automatic-Reboot` to `"false"` and monitor `/var/run/reboot-required` in the watchdog script.
+
+#### 13.4 External Uptime Monitoring
+
+The watchdog (§13.2) monitors from inside the host — if the host itself goes down, it can't alert. Add an external check that pings your gateway endpoint from outside:
+
+**Option A: Cloudflare Health Checks (Recommended — Free Tier)**
+
+In the Cloudflare dashboard for your domain:
+
+1. Navigate to **Traffic → Health Checks**
+2. Create a new health check:
+   - **URL**: `https://openclaw.yourdomain.com/api/health`
+   - **Interval**: 60 seconds
+   - **Expected status**: `401` (gateway auth rejects unauthenticated requests — that's a valid "alive" signal)
+   - **Notification**: Email or webhook on failure
+
+**Option B: Self-Hosted Uptime Kuma**
+
+If you have a second server (even a cheap VPS), [Uptime Kuma](https://github.com/louislam/uptime-kuma) provides a full monitoring dashboard:
+
+```bash
+# On a DIFFERENT host — not the OpenClaw server
+docker run -d \
+  --name uptime-kuma \
+  -p 3001:3001 \
+  -v uptime-kuma-data:/app/data \
+  --restart unless-stopped \
+  louislam/uptime-kuma:1
+```
+
+Add a monitor for `https://openclaw.yourdomain.com` with expected status `401` and 60-second interval.
+
+**Option C: Free External Services**
+
+- [Uptime Robot](https://uptimerobot.com/) — 5-minute intervals on free tier
+- [Healthchecks.io](https://healthchecks.io/) — cron monitoring (pair with the watchdog script to detect cron failures)
+
+For Healthchecks.io integration, add this to the end of the watchdog script:
+
+```bash
+# Ping healthchecks.io on successful watchdog run (dead man's switch)
+# curl -fsS --retry 3 https://hc-ping.com/YOUR-UUID > /dev/null 2>&1
+```
+
+#### 13.5 Recovery Objectives
+
+| Metric | Target | How to Achieve |
+|--------|--------|----------------|
+| **RTO** | **< 30 minutes** | Warm standby (§13.8) reduces to < 15 minutes. Cold recovery: provision VPS + restore + deploy. |
+| **RPO** | **24 hours** (default) | Daily backup cron (Step 11). Reduce to 1 hour with `0 * * * *` cron schedule — but verify disk space. |
+| **MTTR** | **< 45 minutes** | Includes diagnosis time. Watchdog alerts (§13.2) + external monitoring (§13.4) cut detection delay to < 10 minutes. |
+
+> **RPO trade-off**: Hourly backups on a 150 GB SSD consume ~2 GB/day (14-day retention). On the Starter tier, that's aggressive. Consider hourly for the config backup only (< 1 MB) and keep the data volume on a daily schedule.
+
+#### 13.6 Backup Verification
+
+Backups that have never been tested are not backups — they're assumptions. This script validates backup integrity without restoring to the production volume.
+
+```bash
+cat > /opt/openclaw/monitoring/verify-backup.sh << 'SCRIPT_EOF'
+#!/bin/bash
+set -euo pipefail
+
+LOG="/opt/openclaw/monitoring/logs/backup-verify-$(date +%F).log"
+BACKUP_DIR="/opt/openclaw/monitoring/backups"
+ENCRYPTION_KEY_FILE="/opt/openclaw/monitoring/.backup-encryption-key"
+
+echo "=== Backup Verification — $(date) ===" | tee -a "$LOG"
+
+# Find the latest backup files
+latest_config=$(ls -t "${BACKUP_DIR}"/openclaw-config-*.tar.gz* 2>/dev/null | head -1)
+latest_data=$(ls -t "${BACKUP_DIR}"/openclaw-data-*.tar.gz* 2>/dev/null | head -1)
+
+if [ -z "$latest_config" ] || [ -z "$latest_data" ]; then
+  echo "FAIL: Missing backup files" | tee -a "$LOG"
+  echo "  Config: ${latest_config:-NOT FOUND}" >> "$LOG"
+  echo "  Data:   ${latest_data:-NOT FOUND}" >> "$LOG"
+  exit 1
+fi
+
+echo "Config backup: $(basename "$latest_config")" >> "$LOG"
+echo "Data backup:   $(basename "$latest_data")" >> "$LOG"
+
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+verify_archive() {
+  local archive="$1"
+  local label="$2"
+
+  # Decrypt if encrypted
+  if [[ "$archive" == *.enc ]]; then
+    if [ ! -f "$ENCRYPTION_KEY_FILE" ]; then
+      echo "FAIL: $label — encrypted but no key file" | tee -a "$LOG"
+      return 1
+    fi
+    openssl enc -d -aes-256-cbc -pbkdf2 \
+      -in "$archive" -out "${WORK_DIR}/${label}.tar.gz" \
+      -pass "file:${ENCRYPTION_KEY_FILE}" 2>> "$LOG"
+    archive="${WORK_DIR}/${label}.tar.gz"
+  fi
+
+  # Test archive integrity (list contents without extracting)
+  if tar -tzf "$archive" > /dev/null 2>> "$LOG"; then
+    file_count=$(tar -tzf "$archive" | wc -l)
+    archive_size=$(du -sh "$archive" | cut -f1)
+    echo "PASS: $label — $file_count files, $archive_size" | tee -a "$LOG"
+    return 0
+  else
+    echo "FAIL: $label — archive is corrupt" | tee -a "$LOG"
+    return 1
+  fi
+}
+
+config_ok=0
+data_ok=0
+
+verify_archive "$latest_config" "config" && config_ok=1
+verify_archive "$latest_data" "data" && data_ok=1
+
+# Summary
+echo "---" >> "$LOG"
+if [ "$config_ok" -eq 1 ] && [ "$data_ok" -eq 1 ]; then
+  echo "RESULT: ALL BACKUPS VERIFIED" | tee -a "$LOG"
+else
+  echo "RESULT: VERIFICATION FAILED — check log: $LOG" | tee -a "$LOG"
+  exit 1
+fi
+SCRIPT_EOF
+chmod 700 /opt/openclaw/monitoring/verify-backup.sh
+```
+
+Run verification weekly, after the daily backup:
+
+```bash
+# sudo crontab -e — add:
+30 3 * * 0 /opt/openclaw/monitoring/verify-backup.sh 2>/dev/null
+```
+
+#### 13.7 Recovery Procedure
 
 On a new Ubuntu 24.04 server:
 
@@ -961,14 +1273,214 @@ docker compose up -d
 cp gateway-token-backup /opt/openclaw/monitoring/.gateway-token
 chmod 600 /opt/openclaw/monitoring/.gateway-token
 
-# 7. Verify
-docker exec openclaw openclaw doctor
-docker exec openclaw openclaw security audit --deep
+# 7. Re-apply firewall (Step 2)
+# 8. Re-apply system tuning (Step 1) and unattended upgrades (Step 13.3)
+# 9. Restore monitoring scripts (watchdog, backup, token rotation)
+cp watchdog.sh backup.sh rotate-token.sh verify-backup.sh /opt/openclaw/monitoring/
+chmod 700 /opt/openclaw/monitoring/*.sh
+# Re-add cron jobs (see Steps 11 and 13)
+```
 
-# 8. Update Cloudflare DNS to point to the new server's IP
-#    (or update Cloudflare Tunnel origin)
+#### 13.8 Post-Recovery Verification Checklist
 
-# 9. Re-apply firewall (Step 2)
+Run this after every recovery — whether from backup, warm standby, or DR drill:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Post-Recovery Verification ==="
+
+# 1. All containers healthy
+echo "── Container Health ──"
+for ctr in openclaw openclaw-docker-proxy openclaw-egress openclaw-litellm; do
+  health=$(docker inspect "$ctr" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}running{{end}}' 2>/dev/null || echo "MISSING")
+  printf "  %-30s %s\n" "$ctr" "$health"
+done
+
+# 2. Security audit
+echo "── Security Audit ──"
+docker exec openclaw openclaw security audit --deep 2>&1 | tail -5
+
+# 3. Sandbox status
+echo "── Sandbox ──"
+docker exec openclaw openclaw sandbox explain 2>&1 | head -10
+
+# 4. LiteLLM connectivity
+echo "── LiteLLM ──"
+litellm_health=$(docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness 2>/dev/null || echo "UNREACHABLE")
+echo "  Health: $litellm_health"
+
+# 5. Egress proxy — whitelisted domain
+echo "── Egress Proxy ──"
+egress_status=$(docker exec openclaw curl -sf -o /dev/null -w "%{http_code}" -x http://openclaw-egress:3128 https://api.anthropic.com 2>/dev/null || echo "FAILED")
+echo "  Anthropic API: $egress_status"
+
+# 6. Egress proxy — blocked domain
+blocked_status=$(docker exec openclaw curl -sf -o /dev/null -w "%{http_code}" -x http://openclaw-egress:3128 https://example.com 2>/dev/null || echo "BLOCKED")
+echo "  example.com:   $blocked_status (expected: BLOCKED or 403)"
+
+# 7. Gateway auth
+echo "── Gateway Auth ──"
+auth_mode=$(docker exec openclaw openclaw config get gateway.auth.mode 2>/dev/null || echo "UNKNOWN")
+echo "  Auth mode: $auth_mode"
+
+# 8. Channel connectivity
+echo "── Channel ──"
+docker exec openclaw openclaw doctor 2>&1 | tail -5
+
+# 9. Disk and memory
+echo "── Resources ──"
+df -h /opt/openclaw | tail -1 | awk '{printf "  Disk: %s used (%s)\n", $5, $3}'
+free -h | awk '/Mem:/ {printf "  Memory: %s/%s used\n", $3, $2}'
+
+echo "=== Verification Complete ==="
+```
+
+#### 13.9 Warm Standby (Reduces RTO to < 15 Minutes)
+
+A warm standby is a pre-provisioned server that mirrors the production configuration but does not run the OpenClaw stack. When the primary fails, you restore the latest data backup and start services — skipping VPS provisioning, Docker installation, firewall setup, and system tuning.
+
+**Setup (one-time):**
+
+1. Provision a second VPS with the same spec (or smaller — you can upgrade later).
+2. Run Steps 1-3 on the standby (Docker, firewall, config files, system tuning, unattended upgrades).
+3. Pull all container images so `docker compose up` doesn't wait for downloads:
+
+```bash
+# On the standby server
+docker pull openclaw/openclaw:2026.2.15
+docker pull tecnativa/docker-socket-proxy:0.6.0
+docker pull ubuntu/squid:6.6-24.04_edge
+docker pull ghcr.io/berriai/litellm:main-latest
+docker pull caddy:2-alpine    # if using Caddy
+```
+
+4. Sync encrypted backups to the standby server nightly. Add to the end of the primary's `backup.sh`, inside the `flock` block:
+
+```bash
+# Sync encrypted backups to warm standby
+# rsync -az --delete /opt/openclaw/monitoring/backups/ \
+#   standby:/opt/openclaw/monitoring/backups/
+```
+
+**Failover procedure:**
+
+```bash
+# On the standby server — after confirming the primary is down
+
+# 1. Restore the latest data volume from the synced backup
+LATEST_DATA=$(ls -t /opt/openclaw/monitoring/backups/openclaw-data-*.tar.gz* | head -1)
+
+# Decrypt if needed
+if [[ "$LATEST_DATA" == *.enc ]]; then
+  openssl enc -d -aes-256-cbc -pbkdf2 \
+    -in "$LATEST_DATA" -out /tmp/openclaw-data.tar.gz \
+    -pass file:/opt/openclaw/monitoring/.backup-encryption-key
+  LATEST_DATA="/tmp/openclaw-data.tar.gz"
+fi
+
+docker volume create openclaw_openclaw-data
+docker run --rm \
+  -v openclaw_openclaw-data:/target \
+  -v "$(dirname "$LATEST_DATA")":/backup:ro \
+  alpine:3.21 tar -xzf "/backup/$(basename "$LATEST_DATA")" -C /target
+
+# 2. Start services
+cd /opt/openclaw
+docker compose up -d
+
+# 3. Update DNS
+#    Cloudflare dashboard: change A record to standby server IP
+#    Or update Cloudflare Tunnel origin to the standby
+
+# 4. Run post-recovery verification (§13.8)
+```
+
+> **Cost**: A standby VPS idles at ~$5-10/month for a minimal KVM instance. The pre-pulled images and pre-configured firewall/system tuning save 15-20 minutes during a real incident — the difference between a 30-minute outage and a 10-minute one.
+
+#### 13.10 DR Drill Schedule
+
+Untested recovery procedures fail under pressure. Schedule quarterly drills:
+
+| Frequency | Drill | What to Verify |
+|-----------|-------|----------------|
+| **Weekly** | Backup verification (§13.6, automated via cron) | Archive integrity, encryption/decryption round-trip |
+| **Monthly** | Restore to temp volume | Data volume restores correctly; `openclaw doctor` passes against restored data |
+| **Quarterly** | Full DR drill on standby or throwaway VPS | End-to-end recovery (§13.7), all services healthy, channel reconnects, egress proxy blocks correctly |
+
+**Monthly restore drill** (non-destructive — uses a temporary volume):
+
+```bash
+# Create a temporary volume, restore into it, verify, then delete
+docker volume create openclaw-drill-test
+
+LATEST_DATA=$(ls -t /opt/openclaw/monitoring/backups/openclaw-data-*.tar.gz* | head -1)
+WORK_FILE="$LATEST_DATA"
+
+# Decrypt if needed
+if [[ "$LATEST_DATA" == *.enc ]]; then
+  openssl enc -d -aes-256-cbc -pbkdf2 \
+    -in "$LATEST_DATA" -out /tmp/drill-data.tar.gz \
+    -pass file:/opt/openclaw/monitoring/.backup-encryption-key
+  WORK_FILE="/tmp/drill-data.tar.gz"
+fi
+
+docker run --rm \
+  -v openclaw-drill-test:/target \
+  -v "$(dirname "$WORK_FILE")":/backup:ro \
+  alpine:3.21 sh -c "tar -xzf '/backup/$(basename "$WORK_FILE")' -C /target && ls -la /target/"
+
+# Verify critical files exist
+docker run --rm \
+  -v openclaw-drill-test:/data:ro \
+  alpine:3.21 sh -c '
+    echo "=== DR Drill Verification ==="
+    [ -f /data/config.json ] && echo "PASS: config.json" || echo "FAIL: config.json missing"
+    [ -d /data/logs ] && echo "PASS: logs directory" || echo "FAIL: logs directory missing"
+    [ -f /data/SOUL.md ] && echo "PASS: SOUL.md" || echo "FAIL: SOUL.md missing"
+    echo "=== Drill Complete ==="
+  '
+
+# Cleanup
+docker volume rm openclaw-drill-test
+rm -f /tmp/drill-data.tar.gz
+```
+
+#### 13.11 HA/DR Summary
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Single-Instance HA/DR Model                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  PREVENTION (reduce incident likelihood)                            │
+│  ├─ Unattended security patches (§13.3)                             │
+│  ├─ Log rotation (Step 1)                                           │
+│  └─ Disk/memory/swap monitoring (§13.2)                             │
+│                                                                     │
+│  DETECTION (reduce time-to-detect)                                  │
+│  ├─ Watchdog script — 5-min internal checks (§13.2)                 │
+│  └─ External uptime monitor — 1-min checks (§13.4)                  │
+│                                                                     │
+│  SELF-HEALING (reduce time-to-recover for container-level issues)   │
+│  ├─ restart: unless-stopped (Step 3)                                │
+│  ├─ live-restore: true (Step 1)                                     │
+│  └─ Healthcheck → auto-restart cycle (Step 3)                       │
+│                                                                     │
+│  RECOVERY (restore after host-level failure)                        │
+│  ├─ Encrypted offsite backups (Step 11)                             │
+│  ├─ Backup verification (§13.6)                                     │
+│  ├─ Recovery procedure (§13.7) + checklist (§13.8)                  │
+│  ├─ Warm standby — RTO < 15 min (§13.9)                            │
+│  └─ Quarterly DR drills (§13.10)                                    │
+│                                                                     │
+│  TARGETS                                                            │
+│  ├─ RTO: < 30 min (cold) / < 15 min (warm standby)                 │
+│  ├─ RPO: 24 hours (daily) / 1 hour (hourly config backups)         │
+│  └─ MTTR: < 45 min (includes detection + diagnosis + recovery)     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Step 14: Scaling
@@ -1244,7 +1756,7 @@ Key differences from the single-server deployment:
 | Placement | Implicit (one host) | Explicit constraints (`openclaw.trusted=true`) |
 | Resource limits | `deploy` block in Compose | Service Update Overrides (JSON) |
 | Secrets | File-based (`.env`) | Docker Swarm secrets |
-| HA/DR | Manual (Step 13) | Standby node failover (SWARM.md §14) |
+| HA/DR | Watchdog + warm standby (Step 13) | Standby node failover (SWARM.md §14) |
 | NFS | Not needed | Required for CapRover HA |
 
 **Migration path:**
