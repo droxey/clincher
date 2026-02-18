@@ -7,7 +7,7 @@ This repository is the **OpenClaw Hardened Swarm Deployment** guide — a produc
 **This is a documentation-only repository.** There is no application source code, no build system, and no automated tests. All content lives in two Markdown files and a Claude Code settings file.
 
 - **Target**: 4-node Ubuntu 24.04 Docker Swarm (3 managers + 1 worker), leader on `nyc`
-- **OpenClaw Version**: `openclaw/openclaw:2026.2.15` (pinned)
+- **OpenClaw Version**: `openclaw/openclaw:2026.2.17` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
 
 ## Repository Structure
@@ -55,7 +55,7 @@ All three services are **pinned to the `nyc` trusted node** via placement constr
 | Service | Image | Purpose | Network |
 |---------|-------|---------|---------|
 | `docker-proxy` | `tecnativa/docker-socket-proxy:0.6.0` | Sandboxed Docker API access (EXEC only) | `captain-overlay-network` + `openclaw-net` |
-| `openclaw` | `openclaw/openclaw:2026.2.15` | Main gateway — agent runtime, tool execution | `captain-overlay-network` + `openclaw-net` |
+| `openclaw` | `openclaw/openclaw:2026.2.17` | Main gateway — agent runtime, tool execution | `captain-overlay-network` + `openclaw-net` |
 | `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | Egress whitelist proxy for LLM API calls | `captain-overlay-network` + `openclaw-net` |
 
 ### Networks

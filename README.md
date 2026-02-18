@@ -6,7 +6,7 @@ Same security model as the Swarm guide — socket proxy, egress whitelist, sandb
 ## Key Information
 
 - **Target**: 1 Ubuntu 24.04 KVM VPS (4 vCPU, 8 GB RAM, 4 GB swap, 150 GB SSD)
-- **OpenClaw Version**: `openclaw/openclaw:2026.2.15` (pinned)
+- **OpenClaw Version**: `openclaw/openclaw:2026.2.17` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
 - **Orchestration**: Docker Compose v2 (no Swarm, no CapRover)
 
@@ -133,15 +133,21 @@ cat > /etc/docker/daemon.json << 'EOF'
     "max-size": "10m",
     "max-file": "3"
   },
+  "storage-driver": "overlay2",
   "live-restore": true,
   "default-ulimits": {
     "nofile": { "Name": "nofile", "Soft": 65536, "Hard": 65536 }
-  }
+  },
+  "dns": ["1.1.1.1", "8.8.8.8"],
+  "max-concurrent-downloads": 4,
+  "max-concurrent-uploads": 2
 }
 EOF
 
 systemctl restart docker
 ```
+
+> **Why `storage-driver` and `dns`?** Explicitly setting `overlay2` avoids Docker's auto-detection logic on first start (which can pick suboptimal drivers on some Ubuntu kernels). Custom DNS resolvers prevent container DNS resolution from falling back to the host's `systemd-resolved` stub, which adds ~50ms latency per lookup — noticeable when Squid resolves LLM provider domains. `max-concurrent-downloads` speeds up image pulls during updates without saturating the NIC.
 
 #### System Tuning
 
@@ -328,12 +334,35 @@ model_list:
       api_key: "os.environ/ANTHROPIC_API_KEY"
       max_budget: 50.0
       rpm: 120
+  - model_name: "anthropic/claude-3-5-haiku-latest"
+    litellm_params:
+      model: "claude-3-5-haiku-latest"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+      max_budget: 20.0
+      rpm: 300
 
 general_settings:
   master_key: "os.environ/LITELLM_MASTER_KEY"
   alerting: ["log"]
+
+# In-memory response cache — eliminates redundant API calls for repeated prompts.
+# Identical requests within the TTL window return cached responses at zero token cost.
+litellm_settings:
+  cache: true
+  cache_params:
+    type: "local"
+    ttl: 600                   # seconds — cache responses for 10 minutes
+
+# Retry and fallback routing — handles transient provider errors and rate limits.
+router_settings:
+  num_retries: 2
+  retry_after: 5               # seconds between retries
+  routing_strategy: "usage-based-routing-v2"
+  enable_pre_call_checks: true  # reject requests that would exceed budget before calling
 EOF
 ```
+
+> **Why three model tiers?** Token costs dominate OpenClaw's operating budget. Haiku handles ~75% of routine tasks (research, file ops, basic reasoning) at 1/10th the cost of Opus. Adding it to the model list lets you route different agent workloads to different price points via OpenClaw's model selection or LiteLLM's routing strategy. The `usage-based-routing-v2` strategy distributes load across models based on real-time usage, and `enable_pre_call_checks` rejects requests that would exceed monthly budget caps before they hit the provider API.
 
 > **Why a model proxy?** LLM API calls are the primary cost driver and the most variable load. Without a proxy, a runaway agent or prompt injection attack can burn through your API budget in minutes. LiteLLM gives you spend caps, per-model rate limits, and audit logging at the infrastructure level — not dependent on the agent behaving correctly.
 
@@ -372,11 +401,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - openclaw-net
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:2375/_ping || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
     deploy:
       resources:
         limits:
@@ -385,7 +420,7 @@ services:
     restart: unless-stopped
 
   openclaw:
-    image: openclaw/openclaw:2026.2.15
+    image: openclaw/openclaw:2026.2.17
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
@@ -393,11 +428,17 @@ services:
       HTTPS_PROXY: http://openclaw-egress:3128
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
+      # Performance: disable Node.js DNS lookup caching lag in bridge networks
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
     volumes:
       - openclaw-data:/root/.openclaw
     networks:
       - openclaw-net
       - proxy-net
+    security_opt:
+      - no-new-privileges:true
+    # Graceful shutdown: 2026.2.12+ drains active sessions before exit
+    stop_grace_period: 30s
     depends_on:
       docker-proxy:
         condition: service_healthy
@@ -410,6 +451,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -420,7 +462,7 @@ services:
     restart: unless-stopped
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:main-v1.81.3-stable
     container_name: openclaw-litellm
     volumes:
       - ./config/litellm-config.yaml:/app/config.yaml:ro
@@ -431,11 +473,14 @@ services:
       HTTPS_PROXY: http://openclaw-egress:3128
     networks:
       - openclaw-net
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s
     deploy:
       resources:
         limits:
@@ -451,11 +496,19 @@ services:
     networks:
       - openclaw-net
       - egress-net
+    read_only: true
+    tmpfs:
+      - /var/spool/squid:size=64M
+      - /var/log/squid:size=32M
+      - /var/run:size=8M
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "squidclient -h localhost mgr:info 2>&1 | grep -q 'Squid Object Cache' || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
     deploy:
       resources:
         limits:
@@ -606,10 +659,26 @@ openclaw config set agents.defaults.sandbox.docker.capDrop '["ALL"]'
 
 # ── Sandbox Resource Caps (prevents tool execution from OOMing the host) ──
 openclaw config set agents.defaults.sandbox.docker.memoryLimit "512m"
+openclaw config set agents.defaults.sandbox.docker.memorySwap "768m"
 openclaw config set agents.defaults.sandbox.docker.cpuLimit "0.5"
 openclaw config set agents.defaults.sandbox.docker.pidsLimit 256
+openclaw config set agents.defaults.sandbox.docker.ulimits.nofile.soft 1024
+openclaw config set agents.defaults.sandbox.docker.ulimits.nofile.hard 2048
 # Limit concurrent sandboxes: 3 × 512M = 1.5G max sandbox memory on 8 GB host
 openclaw config set agents.defaults.sandbox.docker.maxConcurrent 3
+
+# ── Sandbox Lifecycle (prevents stale containers from eating disk) ────
+openclaw config set agents.defaults.sandbox.docker.idleHours 12
+openclaw config set agents.defaults.sandbox.docker.maxAgeDays 3
+
+# ── Token Cost Optimization ──────────────────────────────────────────
+# Clamp maxTokens to prevent runaway output costs (2026.2.17 auto-clamps
+# to contextWindow, but explicit is better than implicit)
+openclaw config set agents.defaults.maxTokens 4096
+# Route heartbeats through LiteLLM's cheapest model instead of Opus.
+# Heartbeats fire every 30 min — at Opus pricing, that's $2-5/day idle cost.
+# Haiku handles heartbeat health checks at 1/60th the cost.
+openclaw config set agents.defaults.model.heartbeat "anthropic/claude-3-5-haiku-latest"
 
 # ── Tool Denials ─────────────────────────────────────────────────────
 openclaw config set agents.defaults.tools.deny '["process", "browser", "nodes", "gateway", "sessions_spawn", "sessions_send", "elevated", "host_exec", "docker", "camera", "canvas", "cron"]'
@@ -679,7 +748,8 @@ openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
 
 # Set the default model — use the strongest available for injection resistance
 openclaw config set agents.defaults.model "anthropic/claude-opus-4-6"
-openclaw config set agents.defaults.maxTokens 8192
+# maxTokens capped at 4096 in Step 5 — override here if you need longer outputs
+# 2026.2.17 auto-clamps maxTokens to contextWindow, so invalid values fail fast
 
 # Voyage AI key for memory embeddings (Step 8) — this one stays in OpenClaw
 # because Voyage bypasses LiteLLM (but still routes through Squid egress proxy)
@@ -701,6 +771,30 @@ nano /opt/openclaw/.env
 docker compose restart litellm
 ```
 
+#### Token Cost Optimization
+
+OpenClaw's default settings optimize for capability, not cost. Without tuning, idle heartbeats, full session history replay, and single-model routing can burn $5-15/day on an always-on deployment. The configuration in Steps 5-6 addresses the biggest leaks:
+
+| Optimization | Config Applied In | Annual Savings Estimate |
+|-------------|-------------------|------------------------|
+| Heartbeat → Haiku routing | Step 5 (`model.heartbeat`) | ~$600-1,800 (was $2-5/day idle) |
+| maxTokens cap (4096) | Step 5 (`maxTokens`) | ~$200-500 (prevents runaway output) |
+| LiteLLM response cache | Step 3 (`cache_params`) | ~$100-300 (eliminates repeated calls) |
+| LiteLLM pre-call budget checks | Step 3 (`enable_pre_call_checks`) | Prevents budget overruns entirely |
+| Haiku model tier availability | Step 3 (`litellm-config`) | 60-80% cost reduction on routine tasks |
+
+**Monitor token spend** from inside the container:
+
+```bash
+docker exec openclaw openclaw usage cost
+# Shows local cost summary from session logs
+
+# Or via LiteLLM dashboard (more granular per-model breakdown):
+docker exec openclaw wget -qO- http://openclaw-litellm:4000/spend/logs
+```
+
+> **Advanced: session history pruning.** The largest single token drain is session history — OpenClaw replays the full conversation on every API call. For long-running agents, periodically start fresh sessions (`openclaw session new`) to reset context. OpenClaw 2026.2+ includes auto-compaction that summarizes older history when context overflows, but proactive session rotation keeps costs predictable. Monitor context usage with `/status` or `/context detail` in the Web UI.
+
 ### Step 7: Channel Integration (Telegram)
 
 Without a channel, the agent can only be reached via the Gateway Web UI / TUI. This deployment uses Telegram as the sole channel integration.
@@ -714,7 +808,7 @@ docker exec -it openclaw sh
 
 openclaw config set channels.telegram.token "YOUR_TELEGRAM_BOT_TOKEN"
 
-# Disable streaming — fixes a known crash in 2026.2.15 where streamed
+# Disable streaming — fixes a known crash in 2026.2.17 where streamed
 # responses cause the Telegram provider to drop the long-poll connection.
 openclaw config set channels.telegram.streamMode "off"
 
@@ -727,7 +821,7 @@ exit
 docker compose restart openclaw
 ```
 
-> **Known issue (2026.2.15)**: Telegram streaming causes intermittent gateway crashes due to a race condition in the long-poll handler. Setting `streamMode: "off"` disables chunked response streaming to Telegram — messages arrive as complete responses instead. This adds slight perceived latency but eliminates the crash. Monitor the [OpenClaw changelog](https://github.com/openclaw) for a fix before re-enabling.
+> **Known issue (2026.2.17)**: Telegram streaming causes intermittent gateway crashes due to a race condition in the long-poll handler. Setting `streamMode: "off"` disables chunked response streaming to Telegram — messages arrive as complete responses instead. This adds slight perceived latency but eliminates the crash. Monitor the [OpenClaw changelog](https://github.com/openclaw) for a fix before re-enabling.
 
 > **Tip**: After restart, send a DM to your bot on Telegram. OpenClaw's DM pairing (Step 5) will prompt you to pair the bot with your account before it responds to messages.
 
@@ -806,7 +900,7 @@ With a Cloudflare Tunnel, you can remove ports 80/443 from UFW entirely. Traffic
 cat > /opt/openclaw/compose.tunnel.yml << 'EOF'
 services:
   cloudflared:
-    image: cloudflare/cloudflared:2025.2.1
+    image: cloudflare/cloudflared:2026.2.0
     container_name: openclaw-tunnel
     command: tunnel run
     environment:
@@ -880,9 +974,10 @@ docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness
 docker exec openclaw wget -qO- http://openclaw-litellm:4000/models
 
 # ── Resource Limits (8 GB budget) ───────────────────────────────────
-# Worst-case: 4G openclaw + 1G litellm + 128M proxy + 128M squid + 3×512M sandboxes = ~6.75G
-# Remaining ~1.25G covers: OS (~1G), Docker daemon (~300M), reverse proxy
+# Worst-case: 4G openclaw + 1G litellm + 128M proxy + 128M squid + 3×768M sandboxes(+swap) = ~7.5G
+# Remaining ~500M covers: OS page cache, Docker daemon, reverse proxy
 # In practice, openclaw reserves 2G and scales up on demand; sandboxes are ephemeral.
+# Sandbox swap capped at 768M (memorySwap) prevents unbounded host swap pressure.
 docker stats --no-stream
 
 # ── Network Connectivity ─────────────────────────────────────────────
@@ -914,6 +1009,14 @@ docker exec openclaw openclaw config get plugins.allow
 # Expected: []
 docker exec openclaw openclaw config get session.dmScope
 # Expected: "per-channel-peer"
+
+# ── Token Cost Optimization Spot-Check ────────────────────────────────
+docker exec openclaw openclaw config get agents.defaults.model.heartbeat
+# Expected: "anthropic/claude-3-5-haiku-latest"
+docker exec openclaw openclaw config get agents.defaults.maxTokens
+# Expected: 4096
+docker exec openclaw openclaw config get agents.defaults.sandbox.docker.idleHours
+# Expected: 12
 ```
 
 ### Step 11: Maintenance
@@ -1044,7 +1147,7 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Agents can't reach LLM APIs | `docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness` | Verify LiteLLM is healthy, check `agents.defaults.apiBase` points to `http://openclaw-litellm:4000`, check `ANTHROPIC_API_KEY` in `/opt/openclaw/.env` |
 | LiteLLM can't reach providers | `docker exec openclaw-litellm curl -x http://openclaw-egress:3128 -I https://api.anthropic.com` | Check squid.conf whitelist, verify `HTTP_PROXY` env var, check `localnet` ACL subnet |
 | Memory index fails | `docker exec openclaw openclaw memory index --verify` | Verify Voyage AI key, check `.voyageai.com` in squid.conf whitelist |
-| Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Set `channels.telegram.streamMode "off"` (Step 7). Known issue in 2026.2.15 — streaming causes long-poll race condition |
+| Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Set `channels.telegram.streamMode "off"` (Step 7). Known issue in 2026.2.17 — streaming causes long-poll race condition |
 | Channel not connecting | `docker exec openclaw openclaw doctor` | Check channel token, verify `dmPolicy`, check pairing status |
 | Container keeps restarting | `docker compose logs <service> --tail 100` | Check resource limits (`docker stats`), verify config files are readable |
 | Squid blocks legitimate traffic | `docker logs openclaw-egress` | Check `squid.conf` ACLs, verify `localnet` matches `openclaw-net` subnet |
@@ -1491,10 +1594,10 @@ A warm standby is a pre-provisioned server that mirrors the production configura
 
 ```bash
 # On the standby server
-docker pull openclaw/openclaw:2026.2.15
+docker pull openclaw/openclaw:2026.2.17
 docker pull tecnativa/docker-socket-proxy:0.6.0
 docker pull ubuntu/squid:6.6-24.04_edge
-docker pull ghcr.io/berriai/litellm:main-stable
+docker pull ghcr.io/berriai/litellm:main-v1.81.3-stable
 docker pull caddy:2-alpine    # if using Caddy
 ```
 
@@ -1797,7 +1900,7 @@ The scaling pattern is **bot partitioning**: create multiple Telegram bots (via 
 cat > /opt/openclaw/compose.secondary.yml << 'EOF'
 services:
   openclaw-secondary:
-    image: openclaw/openclaw:2026.2.15
+    image: openclaw/openclaw:2026.2.17
     container_name: openclaw-secondary
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
@@ -1805,11 +1908,15 @@ services:
       HTTPS_PROXY: http://openclaw-egress:3128
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
     volumes:
       - openclaw-data-secondary:/root/.openclaw
     networks:
       - openclaw-net
       - proxy-net
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
     depends_on:
       docker-proxy:
         condition: service_healthy
@@ -1822,6 +1929,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
