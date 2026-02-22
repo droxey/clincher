@@ -460,15 +460,18 @@ http_access deny !Safe_ports
 acl localnet src 172.16.0.0/12
 http_access deny !localnet
 
-# Whitelist LLM provider API domains
+# Whitelist LLM provider API domains (see Step 6 for full provider list)
 acl llm_apis dstdomain .anthropic.com
 acl llm_apis dstdomain .openai.com
-# Memory embeddings (required if using Voyage AI for memory — Step 8)
+# Memory embeddings (required for Voyage AI memory — Step 8)
 acl llm_apis dstdomain .voyageai.com
-# Uncomment additional providers as needed:
-# acl llm_apis dstdomain .groq.com
-# acl llm_apis dstdomain .googleapis.com
-# acl llm_apis dstdomain .x.ai
+# Uncomment providers as you add their API keys in Step 6:
+# acl llm_apis dstdomain .x.ai               # xAI Grok
+# acl llm_apis dstdomain .groq.com            # Groq
+# acl llm_apis dstdomain .googleapis.com      # Google Gemini
+# acl llm_apis dstdomain .deepseek.com        # DeepSeek
+# acl llm_apis dstdomain .openrouter.ai       # OpenRouter
+# acl llm_apis dstdomain .baidubce.com        # Baidu Qianfan
 
 # CONNECT tunneling (used for all HTTPS requests through the proxy)
 acl CONNECT method CONNECT
@@ -980,6 +983,28 @@ docker compose restart openclaw
 
 ### Step 6: API Keys and Model Configuration
 
+OpenClaw routes to LLM providers via the Squid egress proxy (Step 3). You need at least **one inference provider** and **Voyage AI** for memory embeddings.
+
+#### Supported Providers
+
+| Provider | Get API Key | Env Variable | Egress Domain | Free Tier |
+|----------|-------------|--------------|---------------|-----------|
+| **[Anthropic](https://console.anthropic.com/dashboard)** | [Console → API Keys](https://console.anthropic.com/settings/api-keys) | `ANTHROPIC_API_KEY` | `.anthropic.com` | Limited signup credits |
+| **[OpenAI](https://platform.openai.com/api-keys)** | [Platform → API Keys](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` | `.openai.com` | GPT-3.5 only, 3 RPM |
+| **[xAI (Grok)](https://console.x.ai)** | [Console](https://console.x.ai) | `XAI_API_KEY` | `.x.ai` | $25 credits (30 days) |
+| **[Groq](https://console.groq.com/keys)** | [Console → Keys](https://console.groq.com/keys) | `GROQ_API_KEY` | `.groq.com` | Yes — rate-limited |
+| **[Google Gemini](https://aistudio.google.com/app/apikey)** | [AI Studio → API Key](https://aistudio.google.com/app/apikey) | `GEMINI_API_KEY` | `.googleapis.com` | Yes — generous |
+| **[DeepSeek](https://platform.deepseek.com/api_keys)** | [Platform → API Keys](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` | `.deepseek.com` | 5M tokens (30 days) |
+| **[OpenRouter](https://openrouter.ai/settings/keys)** | [Settings → Keys](https://openrouter.ai/settings/keys) | `OPENROUTER_API_KEY` | `.openrouter.ai` | Some free models |
+| **[Baidu Qianfan](https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application)** | [IAM → Access Keys](https://console.bce.baidu.com/iam/#/iam/accesslist) | `QIANFAN_AK` + `QIANFAN_SK` | `.baidubce.com` | Limited free quota |
+| **[Voyage AI](https://dash.voyageai.com)** | [Dashboard](https://dash.voyageai.com) | `VOYAGE_API_KEY` | `.voyageai.com` | 200M tokens free |
+| **[vLLM](https://docs.vllm.ai/en/latest/getting_started/quickstart/)** (self-hosted) | N/A — [Quickstart](https://docs.vllm.ai/en/latest/getting_started/quickstart/) | `VLLM_API_KEY` (self-hosted only) | Your server IP | N/A — open source |
+
+> **Choosing a provider**: Anthropic Claude Opus 4.6 is the recommended default for tool-enabled agents — it has the strongest instruction-following and injection resistance. Use Groq or DeepSeek for cost-sensitive workloads where tool execution is disabled. vLLM eliminates external API calls entirely but requires GPU compute.
+>
+> **Egress domain column**: Each provider you enable must be whitelisted in the Squid ACL (Step 3). The domains listed above are the ones to add to `acl llm_apis dstdomain`. Only whitelist providers you actually use.
+
+#### Configure API Keys
 LLM provider API keys are managed by LiteLLM (configured in `/opt/openclaw/.env` during Step 4). OpenClaw routes all model requests through LiteLLM — keys never enter the OpenClaw container.
 
 ```bash
@@ -989,7 +1014,28 @@ docker exec -it openclaw sh
 Inside the container:
 
 ```bash
-# Point OpenClaw at LiteLLM instead of direct provider APIs
+# Create .env file for API keys (type/paste — do not pass keys as CLI args)
+nano /root/.openclaw/.env
+
+# ── Required ──────────────────────────────────────────────────────────
+# ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# ── Memory embeddings (required for Step 8) ───────────────────────────
+# VOYAGE_API_KEY=pa-your-key-here
+
+# ── Optional — uncomment providers you use ────────────────────────────
+# OPENAI_API_KEY=sk-your-key-here
+# XAI_API_KEY=xai-your-key-here
+# GROQ_API_KEY=gsk_your-key-here
+# GEMINI_API_KEY=your-key-here
+# DEEPSEEK_API_KEY=sk-your-key-here
+# OPENROUTER_API_KEY=sk-or-v1-your-key-here
+# QIANFAN_AK=your-access-key
+# QIANFAN_SK=your-secret-key
+
+chmod 600 /root/.openclaw/.env
+
+# Point OpenClaw at LiteLLM he instead of direct provider APIs
 openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
 
 # Set the default model — use the strongest available for injection resistance
@@ -1007,6 +1053,9 @@ chmod 600 /root/.openclaw/.env
 exit
 ```
 
+> **Security reminder**: Every provider key you add is a credential that could be exfiltrated via prompt injection. The SOUL.md (Step 5) instructs agents to never reveal keys, and `logging.redactSensitive` prevents them from appearing in transcripts — but the strongest protection is minimizing the number of keys in the environment. Add only what you need.
+
+Restart to load the new environment:
 To add or rotate LLM provider API keys, edit `/opt/openclaw/.env` on the host and restart LiteLLM:
 
 ```bash
