@@ -1,18 +1,18 @@
 # OpenClaw Hardened Single-Server Deployment (2026.2)
 
 **Production-grade, least-privilege OpenClaw deployment on a single server using Docker Compose.**
-Same security model as the Swarm guide — socket proxy, egress whitelist, sandbox hardening — without the multi-node orchestration overhead.
+Full security posture — socket proxy, egress whitelist, and sandbox hardening — without multi-node orchestration overhead.
 
 ## Key Information
 
 - **Target**: 1 Ubuntu 24.04 KVM VPS (4 vCPU, 8 GB RAM, 4 GB swap, 150 GB SSD)
 - **OpenClaw Version**: `openclaw/openclaw:2026.2.17` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
-- **Orchestration**: Docker Compose v2 (no Swarm, no CapRover)
+- **Orchestration**: Docker Compose v2
 
 ### Why Single-Server?
 
-The [Swarm deployment guide](README.md) pins all three services to a single trusted node via placement constraints. A 4-node Swarm adds NFS, overlay networks, Service Update Overrides, and quorum management — none of which benefit a single-node workload. This guide delivers the same security posture with ~80% less operational complexity.
+A single server with Docker Compose delivers the full OpenClaw security posture — socket proxy, egress whitelist, sandbox isolation, and all hardening steps — with roughly 80% less operational complexity than multi-node alternatives. Three bridge networks enforce least-privilege communication without requiring overlay networking or cluster coordination.
 
 ### Architecture
 
@@ -2439,37 +2439,7 @@ openclaw.yourdomain.com {
 
 > **State isolation**: Each instance has its own data volume, memory index, session transcripts, and SOUL.md. Users messaging @YourMainBot see different conversation history than users messaging @YourTeamBot. Each instance can have different SOUL.md personalities, tool permissions, and hardening levels — e.g., the team bot could allow more tools while the public bot stays locked down. If you need shared memory across instances, you would need to externalize the vector store (PostgreSQL + pgvector, or a hosted vector DB) — OpenClaw does not natively support this yet.
 
-#### 14.4 Phase 4 — Docker Swarm Migration
-
-When you outgrow a single host entirely — because you need node-level fault tolerance, encrypted overlay networks, or CapRover's orchestration dashboard — migrate to the Swarm architecture documented in [SWARM.md](SWARM.md).
-
-Key differences from the single-server deployment:
-
-| Concern | Single-Server (This Guide) | Swarm (SWARM.md) |
-|---------|---------------------------|-------------------|
-| Orchestration | Docker Compose v2 | CapRover on Docker Swarm |
-| Network | Bridge (internal) | Encrypted overlay (IPSEC) |
-| Service discovery | Container names | `srv-captain--<name>` DNS |
-| Placement | Implicit (one host) | Explicit constraints (`openclaw.trusted=true`) |
-| Resource limits | `deploy` block in Compose | Service Update Overrides (JSON) |
-| Secrets | File-based (`.env`) | Docker Swarm secrets |
-| HA/DR | Watchdog + warm standby (Step 13) | Standby node failover (SWARM.md §14) |
-| NFS | Not needed | Required for CapRover HA |
-
-**Migration path:**
-
-1. Provision the Swarm nodes (SWARM.md Steps 1-6)
-2. Back up the current `openclaw-data` volume (Step 11 of this guide)
-3. Deploy services to Swarm (SWARM.md Steps 7-9)
-4. Restore the data volume to the Swarm's `openclaw-data` volume
-5. Apply Service Update Overrides (SWARM.md Step 10.1)
-6. Re-apply hardening and channel config (SWARM.md Steps 10.2-10.5)
-7. Update Cloudflare DNS to the Swarm leader's IP
-8. Decommission the single server
-
-> **Important**: The Swarm deployment also pins all services to one trusted node. Swarm adds fault tolerance (automatic rescheduling if the trusted node fails) and encrypted inter-node traffic, but does not add horizontal compute capacity for the OpenClaw Gateway itself. True horizontal scaling still requires channel partitioning (Phase 3) within the Swarm.
-
-#### 14.5 Scaling Decision Matrix
+#### 14.4 Scaling Decision Matrix
 
 | Signal | Action |
 |--------|--------|
@@ -2477,8 +2447,6 @@ Key differences from the single-server deployment:
 | LLM API costs unpredictable or growing fast | Phase 2: Tune LiteLLM spend caps and routing |
 | Need separate bots for different user groups | Phase 3: Telegram bot partitioning |
 | Need per-user data isolation (compliance) | Phase 3: Separate instances per tenant |
-| Need node-level fault tolerance | Phase 4: Swarm migration |
-| Need zero-downtime deployments | Phase 4: Swarm with rolling updates |
 
 ---
 

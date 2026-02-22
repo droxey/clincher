@@ -1,21 +1,24 @@
-# ClawSwarm — AI Assistant Guide
+# OpenClaw Single-Server — AI Assistant Guide
 
 ## Project Overview
 
-This repository is the **OpenClaw Hardened Swarm Deployment** guide — a production-grade, security-hardened deployment of [OpenClaw](https://github.com/openclaw) (an AI agent platform) on Docker Swarm using CapRover as the orchestration layer.
+This repository is the **OpenClaw Hardened Single-Server Deployment** guide — a production-grade, security-hardened deployment of [OpenClaw](https://github.com/openclaw) (an AI agent platform) on a single Ubuntu 24.04 server using Docker Compose.
 
-**This is a documentation-only repository.** There is no application source code, no build system, and no automated tests. All content lives in two Markdown files and a Claude Code settings file.
+**This is a documentation-only repository.** There is no application source code, no build system, and no automated tests. All content lives in Markdown files and a Claude Code settings file.
 
-- **Target**: 4-node Ubuntu 24.04 Docker Swarm (3 managers + 1 worker), leader on `nyc`
+- **Target**: 1 Ubuntu 24.04 KVM VPS (4 vCPU, 8 GB RAM, 4 GB swap, 150 GB SSD)
 - **OpenClaw Version**: `openclaw/openclaw:2026.2.17` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
 
 ## Repository Structure
 
 ```
-clawswarm/
+captainclaw/
 ├── CLAUDE.md                    # This file — project context + style guide for AI assistants
 ├── README.md                    # Primary artifact: 14-step deployment guide + Ansible docs
+├── README_SERVER_SETUP.md       # Server setup and hardening reference (Steps 1-5, 10)
+├── RESEARCH.md                  # Security research and deployment plan audit
+├── USECASES.md                  # Community use cases and example deployments
 ├── .claude/
 │   └── settings.local.json      # Claude Code permissions and output style config
 └── ansible/                     # Ansible automation for the deployment guide
@@ -38,7 +41,7 @@ clawswarm/
         └── monitoring/          # Step 13.2.1: Prometheus + Grafana (optional)
 ```
 
-No Dockerfiles or CI/CD pipelines. CapRover YAML specs and shell scripts are embedded in `README.md`. The `ansible/` directory provides Jinja2-templated versions of these same configs for automated deployment.
+No Dockerfiles or CI/CD pipelines. Docker Compose specs and shell scripts are embedded in `README.md`. The `ansible/` directory provides Jinja2-templated versions of these same configs for automated deployment.
 
 ## Architecture
 
@@ -50,65 +53,56 @@ No Dockerfiles or CI/CD pipelines. CapRover YAML specs and shell scripts are emb
                   └──────────────┬──────────────────────┘
                                  │ HTTPS
                   ┌──────────────▼──────────────────────┐
-                  │     CapRover Nginx (nyc node)        │
+                  │     Caddy / Nginx (reverse proxy)    │
+                  │         [proxy-net]                   │
                   └──────────────┬──────────────────────┘
-                                 │ overlay network
+                                 │
           ┌──────────────────────┼──────────────────────┐
           │                      │                      │
   ┌───────▼───────┐   ┌─────────▼────────┐   ┌────────▼────────┐
   │ docker-proxy  │   │  openclaw (gw)   │   │ openclaw-egress │
   │ (socket proxy)│   │  (main service)  │   │ (Squid proxy)   │
-  └───────────────┘   └──────────────────┘   └─────────────────┘
-          │                      │                      │
-          ▼                      ▼                      ▼
-   /var/run/docker.sock    openclaw-data vol     LLM API whitelist
-   (read-only)             (/root/.openclaw)     (.anthropic.com,
-                                                  .openai.com)
+  │ [openclaw-net]│   │ [openclaw-net +  │   │ [openclaw-net + │
+  └───────────────┘   │  proxy-net]      │   │  egress-net]    │
+          │           └──────────────────┘   └────────┬────────┘
+          ▼                      │                    │
+   /var/run/docker.sock    openclaw-data vol          ▼
+   (read-only)             (/root/.openclaw)    LLM API whitelist
+                                                (.anthropic.com,
+                                                 .openai.com)
 ```
 
-All three services are **pinned to the `nyc` trusted node** via placement constraints.
+Three bridge networks enforce least-privilege communication. `openclaw-net` is **internal** — no internet access. The egress proxy bridges internal and external via `egress-net`. The reverse proxy reaches the gateway via `proxy-net`. Traffic never leaves the host between services.
 
 ### Services
 
 | Service | Image | Purpose | Network |
 |---------|-------|---------|---------|
-| `docker-proxy` | `tecnativa/docker-socket-proxy:0.6.0` | Sandboxed Docker API access (EXEC only) | `captain-overlay-network` + `openclaw-net` |
-| `openclaw` | `openclaw/openclaw:2026.2.17` | Main gateway — agent runtime, tool execution | `captain-overlay-network` + `openclaw-net` |
-| `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | Egress whitelist proxy for LLM API calls | `captain-overlay-network` + `openclaw-net` |
+| `docker-proxy` | `tecnativa/docker-socket-proxy:0.6.0` | Sandboxed Docker API access (EXEC only) | `openclaw-net` |
+| `openclaw` | `openclaw/openclaw:2026.2.17` | Main gateway — agent runtime, tool execution | `openclaw-net` + `proxy-net` |
+| `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | Egress whitelist proxy for LLM API calls | `openclaw-net` + `egress-net` |
 
 ### Networks
 
-- **`captain-overlay-network`**: CapRover's built-in overlay for service discovery (`srv-captain--<name>` DNS)
-- **`openclaw-net`**: Custom encrypted overlay (IPSEC) for OpenClaw inter-service traffic. Created with `--opt encrypted`, without `--attachable`
+- **`openclaw-net`**: Internal bridge network — no internet access. All three services attach to this.
+- **`egress-net`**: Bridge network connecting the egress proxy to the internet for whitelisted LLM API calls.
+- **`proxy-net`**: Bridge network connecting the reverse proxy (Caddy/Nginx) to the OpenClaw gateway.
 
 ### Security Model
 
 Defense-in-depth approach:
 
-1. **Placement constraints**: All sensitive services on single trusted node (`openclaw.trusted=true`)
-2. **Network isolation**: Encrypted overlay, no `--attachable` flag
-3. **Egress control**: Squid proxy whitelists only HTTPS to LLM provider domains
-4. **Socket proxy**: Only EXEC, CONTAINERS, IMAGES, INFO, VERSION, PING, EVENTS enabled; all sensitive APIs (BUILD, SECRETS, SWARM, etc.) explicitly denied
-5. **Sandbox hardening**: `capDrop=["ALL"]`, `network=none`, no workspace access
-6. **Tool denials**: 13 dangerous tools blocked at both agent and gateway levels
-7. **Credential handling**: Docker Swarm secrets or file-based — never CLI args
-8. **Firewall**: UFW + ufw-docker, admin IP whitelist, Cloudflare-only ingress
-
-## CapRover-Specific Patterns
-
-**Critical constraint**: CapRover's `captainVersion: 4` parser only applies `image`, `environment`, `ports`, `volumes`, `depends_on`, and `hostname`. All `deploy` block settings are **silently ignored**.
-
-This means:
-- YAML specs in the README include `deploy` blocks for documentation only
-- Placement constraints, resource limits, restart policies, and healthchecks **must** be applied via **Service Update Overrides** (JSON, pasted into CapRover dashboard)
-- Both `captain-overlay-network` and `openclaw-net` must be specified in the override's `Networks` array
-- After applying overrides, services must be force-updated: `docker service update --force srv-captain--<name>`
-
-**Service naming**: CapRover prefixes all services with `srv-captain--`. So `openclaw` becomes `srv-captain--openclaw`.
+1. **Network isolation**: Three bridge networks, `openclaw-net` is `internal: true`
+2. **Egress control**: Squid proxy whitelists only HTTPS to LLM provider domains
+3. **Socket proxy**: Only EXEC, CONTAINERS, IMAGES, INFO, VERSION, PING, EVENTS enabled; all sensitive APIs (BUILD, SECRETS, SWARM, etc.) explicitly denied
+4. **Sandbox hardening**: `capDrop=["ALL"]`, `network=none`, no workspace access
+5. **Tool denials**: 13 dangerous tools blocked at both agent and gateway levels
+6. **Credential handling**: File-based secret passing — never CLI args
+7. **Firewall**: UFW + fail2ban, admin IP whitelist, Cloudflare-only ingress
 
 ## README Structure
 
-The `README.md` (single-server guide) follows a strict 14-step deployment sequence. When editing, preserve this order:
+The `README.md` follows a strict 14-step deployment sequence. When editing, preserve this order:
 
 1. **Prerequisites** — Docker, system tuning, daemon config
 2. **Configure Firewall** — UFW, Cloudflare ingress
@@ -123,7 +117,7 @@ The `README.md` (single-server guide) follows a strict 14-step deployment sequen
 11. **Maintenance** — Backup scripts, token rotation, cron
 12. **Troubleshooting** — Symptom/diagnostic/fix table
 13. **High Availability and Disaster Recovery** — HA foundations, watchdog monitoring, unattended updates, external uptime checks, backup verification, recovery procedure, warm standby, DR drills
-14. **Scaling** — Vertical scaling, LiteLLM proxy, channel partitioning, Swarm migration
+14. **Scaling** — Vertical scaling, LiteLLM proxy, channel partitioning
 
 **Deployment order matters**: The Compose file defines `depends_on` with health conditions, so `docker compose up -d` handles service ordering automatically. Hardening (Step 5) must be applied before exposing the gateway to traffic (Step 9).
 
@@ -153,10 +147,8 @@ Commit messages follow a pattern of describing the scope and count of changes:
 ### Editing Conventions
 
 When modifying the README:
-- **Preserve the 13-step structure** — do not reorder or merge steps
-- **Keep YAML specs and JSON overrides in sync** — if you change a value in a YAML example, update the corresponding Service Update Override JSON
-- **Mark CapRover-ignored fields** — any `deploy`, `networks`, or `healthcheck` in YAML needs a comment noting it's documentation-only
-- **Use placeholders consistently**: `<NYC_NODE_IP>`, `<SWARM_SUBNET_CIDR>`, `<ADMIN_IP>`, `<ALL_NODE_IPS>`, `<OVERLAY_SUBNET>`, `<MANAGER_TOKEN_FROM_NYC>`
+- **Preserve the 14-step structure** — do not reorder or merge steps
+- **Use placeholders consistently**: `<SERVER_IP>`, `<SUBNET_CIDR>`, `<ADMIN_IP>`
 - **Security-sensitive values**: Never hardcode real IPs, passwords, or API keys. Always use placeholders or generation commands
 - **Shell scripts**: Use `set -euo pipefail`, `flock` for mutual exclusion, file-based secret passing (not CLI args)
 
@@ -166,23 +158,17 @@ These are the key commands for validating a deployment (useful context when revi
 
 ```bash
 # Security audit
-docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") openclaw security audit --deep
+docker exec $(docker ps -q -f "name=openclaw") openclaw security audit --deep
 
 # Sandbox status
-docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") openclaw sandbox explain
+docker exec $(docker ps -q -f "name=openclaw") openclaw sandbox explain
 
-# Placement constraint check
-docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Placement}}'
-
-# Network attachment check
-docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Networks}}'
-
-# Resource limits check
-docker service inspect srv-captain--openclaw --format '{{json .Spec.TaskTemplate.Resources}}'
+# Container health
+docker compose ps
 
 # Egress proxy connectivity
-docker exec $(docker ps -q -f "name=srv-captain--openclaw\.") \
-  curl -x http://srv-captain--openclaw-egress:3128 -I https://api.anthropic.com
+docker exec $(docker ps -q -f "name=openclaw") \
+  curl -x http://openclaw-egress:3128 -I https://api.anthropic.com
 
 # Gateway reachability
 curl -I https://openclaw.yourdomain.com
@@ -190,12 +176,10 @@ curl -I https://openclaw.yourdomain.com
 
 ## Common Pitfalls
 
-1. **Forgetting Service Update Overrides**: The single most common mistake. YAML `deploy` blocks do nothing in CapRover — constraints and limits must be applied via JSON overrides
-2. **Missing network in override**: Both `captain-overlay-network` AND `openclaw-net` are required. Missing either breaks service discovery or encrypted communication
-3. **Exposing secrets via CLI args**: `docker exec` args appear in process tables. Always use file-based secret passing
-4. **Using `--attachable` on `openclaw-net`**: Would allow standalone containers to join the encrypted network
-5. **Skipping force-update after override**: Overrides don't take effect until `docker service update --force`
-6. **NFS `no_root_squash`**: Required because CapRover's captain container runs as root. Not a misconfiguration — document why it's needed
+1. **Exposing secrets via CLI args**: `docker exec` args appear in process tables. Always use file-based secret passing
+2. **`openclaw-net` must be `internal: true`**: Without this, containers on this network can reach the internet directly, bypassing the egress proxy
+3. **Missing `depends_on` health conditions**: If the socket proxy or egress proxy isn't healthy before OpenClaw starts, it will fail to connect
+4. **Squid ACL too broad**: Tighten the `localnet` ACL source range to the actual Docker bridge subnet — never leave it as `10.0.0.0/8`
 
 ---
 
@@ -227,18 +211,18 @@ Problem: "Straightforward" and "just" dismiss real complexity. Shuts down follow
 
 <example type="good" label="minimizing-language">
 User: How does Docker networking work?
-Response: Docker networking has a few moving parts worth understanding. Bridge networks are the default — think of them like a private switch that only containers on the same bridge can see. If you need containers across different hosts to talk, overlay networks handle that, but they require swarm mode. What's your setup? Single host or multi-node?
+Response: Docker networking has a few moving parts worth understanding. Bridge networks are the default — think of them like a private switch that only containers on the same bridge can see. By default, containers on a bridge network can reach the internet but can't be reached from outside. The `internal: true` flag cuts off external access entirely. What's your setup and what are you trying to isolate?
 </example>
 
 <example type="bad" label="sycophantic-filler">
-User: Can you configure LiveKit with CapRover for me?
+User: Can you configure LiveKit with Caddy for me?
 Response: Great question! I'd be happy to help you with that. LiveKit is an excellent choice for video conferencing. Let me walk you through the configuration step by step. First, I want to say that this is a really smart approach...
 Problem: Sycophantic filler. Five sentences before the actual answer. The user asked for configuration, not validation.
 </example>
 
 <example type="good" label="sycophantic-filler">
-User: Can you configure LiveKit with CapRover for me?
-Response: Two things will bite you here. First, LIVEKIT_KEYS needs a space after the colon — "APIKey: Secret", not "APIKey:Secret". Second, enable WebSocket support in CapRover for both the play and livekit apps or connections will silently fail. Here's the full config...
+User: Can you configure LiveKit with Caddy for me?
+Response: Two things will bite you here. First, LiveKit needs WebSocket support — add `header_up Connection upgrade` and `header_up Upgrade websocket` to your Caddy reverse_proxy block. Second, the TURN server requires raw TCP/UDP on ports 3478 and 5349, which Caddy doesn't proxy — you'll need a separate `tcp_proxy` or expose those ports directly. Here's the full Caddyfile block...
 </example>
 
 <example type="bad" label="correction-handling">
@@ -277,7 +261,7 @@ Response: Yes, but with a caveat. It's a solid pick as a gateway/harness — han
 
 Where it falls short: local inference. The N150 is a 6W quad-core with weak integrated graphics. You're not running any meaningful local model on it.
 
-My recommendation: if you're fine with API-based models, the 1664 (16GB/64GB) at ~$240-280 is the move. Given your CapRover/Docker experience, you could containerize the whole setup and run other services alongside it.
+My recommendation: if you're fine with API-based models, the 1664 (16GB/64GB) at ~$240-280 is the move. Given your Docker Compose experience, you could containerize the whole setup and run other services alongside it.
 </example>
 
 <example type="good" label="strong-pushback">

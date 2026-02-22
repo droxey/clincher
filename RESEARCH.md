@@ -221,7 +221,7 @@ openclaw config set gateway.auth.token "$(cat /tmp/.gw-pass)"
 
 Token auth uses `Authorization: Bearer <token>` headers, which are more appropriate for programmatic/proxy access than password auth. The `gateway.password` key may map to the older auth path that doesn't enforce `gateway.auth.mode`.
 
-**Risk**: If `gateway.auth.mode` defaults to something unexpected (or `"trusted-proxy"` behind CapRover), the password may not be enforced at all.
+**Risk**: If `gateway.auth.mode` defaults to something unexpected (e.g., `"trusted-proxy"` when the gateway is behind a reverse proxy), the password may not be enforced at all.
 
 #### C2: Tailscale auth not explicitly disabled behind reverse proxy
 
@@ -231,18 +231,18 @@ The official security docs [15] state:
 
 > "Disable `allowTailscale` if you terminate TLS in front of the Gateway. Use token/password auth or Trusted Proxy Auth instead."
 
-Behind CapRover's nginx, an attacker who can reach the overlay network could spoof `tailscale-user-login` headers. The plan does not set:
+Behind a reverse proxy, an attacker who can reach the internal network could spoof `tailscale-user-login` headers. The plan does not set:
 ```bash
 openclaw config set gateway.auth.allowTailscale false
 ```
 
-**Risk**: Auth bypass via header spoofing on the overlay network.
+**Risk**: Auth bypass via header spoofing on the internal network.
 
 #### C3: mDNS/Bonjour discovery not disabled
 
 **Location**: README Step 10.3 (missing)
 
-OpenClaw broadcasts its presence via mDNS (`_openclaw-gw._tcp`) by default. In a Docker Swarm with an overlay network, this leaks service metadata (role, port, transport) to any container on the network.
+OpenClaw broadcasts its presence via mDNS (`_openclaw-gw._tcp`) by default. On a Docker bridge network, this leaks service metadata (role, port, transport) to any container on the network.
 
 The plan should add:
 ```bash
@@ -264,7 +264,7 @@ acl localnet src 10.0.0.0/8
 acl localnet src 172.16.0.0/12
 ```
 
-These ranges cover ~17.9 million and ~1 million addresses respectively. The actual overlay network subnet is typically a /24 or /16. The plan's own comment says "Tighten these to your actual overlay subnet" but provides the broad ranges as the working default.
+These ranges cover ~17.9 million and ~1 million addresses respectively. The actual Docker bridge subnet is typically a /24 or /16. The plan's own comment says "Tighten these to your actual bridge subnet" but provides the broad ranges as the working default.
 
 **Risk**: Any container on any RFC 1918 network that can reach the Squid proxy can use it as an egress gateway to whitelisted LLM APIs.
 
@@ -305,9 +305,9 @@ openclaw config set gateway.bind "0.0.0.0"
 
 The official docs [15] recommend: "Prefer Tailscale Serve over LAN binds; never expose unauthenticated on `0.0.0.0`."
 
-Behind CapRover's nginx, the gateway only needs to be reachable on the overlay network. While password auth is configured, binding to all interfaces exposes the gateway to any network the container is attached to.
+Behind a reverse proxy, the gateway only needs to be reachable on the internal bridge network. While password auth is configured, binding to all interfaces exposes the gateway to any network the container is attached to.
 
-**Recommendation**: Use `"lan"` or `"custom"` bind mode targeting the overlay subnet, or document why `0.0.0.0` is required for CapRover's nginx routing.
+**Recommendation**: Use `"lan"` or `"custom"` bind mode targeting the bridge subnet, or document why `0.0.0.0` is required for reverse proxy routing.
 
 #### H5: Logging redaction not configured
 
@@ -352,15 +352,7 @@ OpenClaw 2026.2.15 added `maxTokens` clamping to `contextWindow` to prevent inva
 
 For a production deployment, explicit model configuration prevents runaway costs and ensures the strongest models (which are more injection-resistant) are used for tool-enabled agents.
 
-#### M3: Backup doesn't cover CapRover state (`/captain/data`)
-
-**Location**: README Step 12
-
-The maintenance script backs up the `openclaw-data` Docker volume but not `/captain/data` (the NFS-mounted CapRover state). Step 14.4 acknowledges this gap but doesn't provide a backup script for it.
-
-If `nyc` and the NFS share are lost simultaneously, CapRover configuration (app definitions, SSL certs, nginx configs) is unrecoverable.
-
-#### M4: Password rotation script uses potentially wrong config key
+#### M3: Password rotation script uses potentially wrong config key
 
 **Location**: README Step 12 — `rotate-password.sh`
 
@@ -370,13 +362,13 @@ openclaw config set gateway.password "$(cat /tmp/.gw-pass)"
 
 This should be `gateway.auth.password` or `gateway.auth.token` depending on the auth mode. See issue C1.
 
-#### M5: Docker socket proxy version not verified as latest
+#### M4: Docker socket proxy version not verified as latest
 
 **Location**: README Step 7
 
 `tecnativa/docker-socket-proxy:0.6.0` is pinned. The latest version should be verified — if a security fix was released post-0.6.0, the plan deploys a vulnerable proxy with direct Docker socket access.
 
-#### M6: No webhook/OpenResponses endpoint security
+#### M5: No webhook/OpenResponses endpoint security
 
 **Location**: README (missing)
 
@@ -437,7 +429,7 @@ The maintenance script writes to its own timestamped log file *and* cron redirec
 | **`logging.redactSensitive: "tools"`** | Redact sensitive data in logs | Protect tool arguments and URLs in transcripts |
 | **`session.dmScope: "per-channel-peer"`** | Session isolation | Prevent cross-user context leakage |
 | **`plugins.allow: []`** | Plugin allowlist | Block unauthorized skill installation |
-| **Gateway TLS (`gateway.tls`)** | End-to-end encryption | Currently relies on CapRover nginx for TLS; no encryption between nginx and gateway |
+| **Gateway TLS (`gateway.tls`)** | End-to-end encryption | Currently relies on reverse proxy for TLS; no encryption between reverse proxy and gateway |
 
 ### 5.2 Operational Features Missing
 
@@ -447,7 +439,6 @@ The maintenance script writes to its own timestamped log file *and* cron redirec
 | **Alerting** | No alerting for service failures, security audit drift, or cost thresholds | Failures discovered only during manual checks or user reports |
 | **Token usage / cost monitoring** | OpenClaw has a built-in token dashboard (since 2026.2.6) — not configured | No cost visibility or runaway-spend protection |
 | **LiteLLM or model proxy** | No centralized model gateway | No request filtering, rate limiting, or cost controls at the model layer |
-| **CapRover state backup** | `/captain/data` not backed up (only `openclaw-data` volume) | CapRover config unrecoverable in disaster |
 | **Structured JSON logging** | No `logging.file` or JSON output configuration | Log aggregation requires parsing unstructured text |
 | **Backup encryption** | Backups stored as plaintext `.tar.gz` | Compromised backup host exposes all OpenClaw data including credentials |
 
@@ -477,7 +468,7 @@ OpenClaw officially supports Podman [18] with rootless containers via `setup-pod
 - **Quadlet/systemd integration**: Production-grade service management without Docker daemon.
 - **Reduced blast radius**: Compromise limited to `openclaw` user's home directory.
 
-**Trade-off**: CapRover requires Docker Swarm. A Podman deployment would mean abandoning CapRover in favor of direct systemd/Quadlet orchestration.
+**Trade-off**: A Podman deployment would mean replacing Docker Compose with direct systemd/Quadlet orchestration.
 
 ### NanoClaw
 
@@ -505,7 +496,7 @@ Ordered by priority:
 | 1 | Switch to `gateway.auth.mode: "token"` with `gateway.auth.token` | Critical | Low |
 | 2 | Disable Tailscale auth: `gateway.auth.allowTailscale: false` | Critical | Low |
 | 3 | Disable mDNS: `discovery.mdns.mode: "off"` | Critical | Low |
-| 4 | Tighten Squid ACLs to actual overlay subnet | High | Low |
+| 4 | Tighten Squid ACLs to actual bridge subnet | High | Low |
 | 5 | Disable browser control: `gateway.nodes.browser.mode: "off"` | High | Low |
 | 6 | Configure logging redaction: `logging.redactSensitive: "tools"` | High | Low |
 | 7 | Set plugin allowlist: `plugins.allow: []` | High | Low |
@@ -513,12 +504,11 @@ Ordered by priority:
 | 9 | Configure session isolation: `session.dmScope` | Medium | Low |
 | 10 | Fix service force-update order (egress before gateway) | Low | Low |
 | 11 | Add healthchecks for docker-proxy and openclaw-egress | Low | Medium |
-| 12 | Add CapRover state backup to maintenance script | Medium | Medium |
-| 13 | Add observability stack (Loki + Grafana minimum) | Medium | High |
-| 14 | Add LiteLLM model proxy for cost control and key isolation | Medium | High |
-| 15 | Configure at least one channel integration | — | Medium |
-| 16 | Create SOUL.md with security guidelines | High | Low |
-| 17 | Evaluate Podman rootless as Docker alternative | — | High |
+| 12 | Add observability stack (Loki + Grafana minimum) | Medium | High |
+| 13 | Add LiteLLM model proxy for cost control and key isolation | Medium | High |
+| 14 | Configure at least one channel integration | — | Medium |
+| 15 | Create SOUL.md with security guidelines | High | Low |
+| 16 | Evaluate Podman rootless as Docker alternative | — | High |
 
 ---
 

@@ -9,7 +9,7 @@ This guide extracts the server setup and hardening steps from the [full deployme
 - **Target**: 1 Ubuntu 24.04 KVM VPS (4 vCPU, 8 GB RAM, 4 GB swap, 150 GB SSD)
 - **OpenClaw Version**: `openclaw/openclaw:2026.2.17` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
-- **Orchestration**: Docker Compose v2 (no Swarm, no CapRover)
+- **Orchestration**: Docker Compose v2
 
 ## Architecture
 
