@@ -505,7 +505,7 @@ OpenClaw routes to LLM providers via the Squid egress proxy (Step 3). You need a
 | **[OpenRouter](https://openrouter.ai/settings/keys)** | [Settings → Keys](https://openrouter.ai/settings/keys) | `OPENROUTER_API_KEY` | `.openrouter.ai` | Some free models |
 | **[Baidu Qianfan](https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application)** | [IAM → Access Keys](https://console.bce.baidu.com/iam/#/iam/accesslist) | `QIANFAN_AK` + `QIANFAN_SK` | `.baidubce.com` | Limited free quota |
 | **[Voyage AI](https://dash.voyageai.com)** | [Dashboard](https://dash.voyageai.com) | `VOYAGE_API_KEY` | `.voyageai.com` | 200M tokens free |
-| **[vLLM](https://docs.vllm.ai/en/latest/getting_started/quickstart/)** (self-hosted) | N/A — [Quickstart](https://docs.vllm.ai/en/latest/getting_started/quickstart/) | `VLLM_API_KEY` | Your server IP | N/A — open source |
+| **[vLLM](https://docs.vllm.ai/en/latest/getting_started/quickstart/)** (self-hosted) | N/A — [Quickstart](https://docs.vllm.ai/en/latest/getting_started/quickstart/) | `VLLM_API_KEY` (self-hosted only) | Your server IP | N/A — open source |
 
 > **Choosing a provider**: Anthropic Claude Opus 4.6 is the recommended default for tool-enabled agents — it has the strongest instruction-following and injection resistance. Use Groq or DeepSeek for cost-sensitive workloads where tool execution is disabled. vLLM eliminates external API calls entirely but requires GPU compute.
 >
