@@ -487,7 +487,7 @@ cat > /opt/openclaw/config/smokescreen-acl.yaml << 'EOF'
 # publicly routable (blocks RFC 1918 / link-local / loopback).
 version: v1
 
-services: []
+services: {}
 
 default:
   project: openclaw
