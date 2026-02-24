@@ -8,6 +8,7 @@
 #   Dry run:      ansible-playbook playbook.yml --ask-vault-pass --check --diff
 #
 # First run requires --ask-pass (-k) so Ansible can SSH to root with a password.
+# Prerequisite: apt install sshpass (needed for Ansible to send SSH passwords).
 # After bootstrap pushes your SSH key, subsequent runs use key-based auth only.
 #
 # Tags: base, config, deploy, harden, integrate, proxy, verify, maintenance, monitoring
@@ -87,6 +88,24 @@
         ansible_port: "{{ ssh_port if (configured_port_check is succeeded) else 22 }}"
 
     # ── Phase 3: Provision deploy user via root ─────────────────────────
+    - name: Check sshpass is installed (required for password-based bootstrap)
+      ansible.builtin.command: which sshpass
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      failed_when: false
+      register: sshpass_check
+      when: ansible_password is defined or ansible_ssh_pass is defined
+
+    - name: Fail if sshpass is missing
+      ansible.builtin.fail:
+        msg: >
+          sshpass is required for password-based SSH bootstrap (--ask-pass).
+          Install it: apt install sshpass — then re-run.
+      when:
+        - ansible_password is defined or ansible_ssh_pass is defined
+        - sshpass_check.rc != 0
+
     - name: Gather facts
       ansible.builtin.setup:
 
