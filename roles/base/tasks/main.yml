@@ -28,6 +28,15 @@
     mode: "0600"
     force: false
 
+- name: Grant deploy user passwordless sudo
+  ansible.builtin.copy:
+    content: "{{ deploy_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/{{ deploy_user }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+
 - name: Deploy SSH hardening config
   ansible.builtin.template:
     src: 99-hardening.conf.j2
