@@ -62,6 +62,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
   - [Step 12: Troubleshooting](#step-12-troubleshooting)
   - [Step 13: High Availability and Disaster Recovery](#step-13-high-availability-and-disaster-recovery)
   - [Step 14: Scaling](#step-14-scaling)
+- [GitHub Copilot Integration](#github-copilot-integration)
 
 ---
 
@@ -2617,6 +2618,46 @@ openclaw.yourdomain.com {
 | LLM API costs unpredictable or growing fast | Phase 2: Tune LiteLLM spend caps and routing |
 | Need separate bots for different user groups | Phase 3: Telegram bot partitioning |
 | Need per-user data isolation (compliance) | Phase 3: Separate instances per tenant |
+
+---
+
+## GitHub Copilot Integration
+
+Once your OpenClaw gateway is deployed and reachable (Step 9), you can connect it as an MCP server to GitHub Copilot Chat in VS Code. This lets Copilot delegate tool execution — web fetch, code runs, file operations, and any other OpenClaw skill — to your hardened, egress-controlled OpenClaw instance instead of running tools locally.
+
+### Repository-Level MCP Configuration
+
+A `.vscode/mcp.json` file is included in this repository. It registers the OpenClaw gateway as an SSE-based MCP server and prompts you for credentials on first use — no secrets are hardcoded.
+
+**Prerequisites**
+
+- VS Code 1.99 or later
+- GitHub Copilot (Free, Pro, Pro+, Business, or Enterprise)
+- If using Copilot Business/Enterprise: the **MCP servers in Copilot** policy must be enabled by your organization admin
+
+**Setup**
+
+1. Open this repository in VS Code.
+
+2. Open `.vscode/mcp.json`. A **Start** button will appear at the top of the server list — click it.
+
+3. VS Code will prompt for two values:
+   - **OpenClaw gateway URL** — the public HTTPS URL from Step 9 (e.g. `https://openclaw.yourdomain.com`)
+   - **OpenClaw gateway auth token** — retrieve it from the server:
+     ```bash
+     cat /opt/openclaw/monitoring/.gateway-token
+     ```
+
+4. Open Copilot Chat, select **Agent** mode, then click the tools icon to confirm `openclaw` appears in the server list.
+
+5. Ask Copilot to use OpenClaw tools directly in chat:
+   ```
+   Use the openclaw tool to fetch https://example.com and summarize it.
+   ```
+
+> **Security note**: The auth token is stored in VS Code's secret storage — it is not written to disk in plaintext or committed to the repository. Rotate the token on the server (Step 11) and re-enter it in VS Code when prompted.
+
+> **Egress reminder**: Copilot-initiated tool calls route through the OpenClaw gateway and are subject to the same Squid egress whitelist as any other session. If a requested domain is not on the whitelist, the call will be blocked — this is intentional. Add domains to the whitelist (Step 3, Squid config) only if you trust them as data destinations.
 
 ---
 
