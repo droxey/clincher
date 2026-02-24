@@ -12,7 +12,11 @@ local_ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
 # ── Image Versions (pinned) ───────────────────────────────────────────
 openclaw_version: "2026.2.23"
 docker_proxy_version: "v0.4.2"
-squid_version: "6.6-24.04_edge"
+# Smokescreen is built from source (no pre-built image).
+# Pin to a specific commit for reproducible builds.
+smokescreen_commit: "5dce0f3"
+smokescreen_go_version: "1.22"
+smokescreen_alpine_version: "3.20"
 litellm_version: "main-v1.81.3-stable"
 redis_version: "7.4.0-v3"
 caddy_version: "2-alpine"
@@ -36,16 +40,18 @@ inotify_max_watches: 524288
 inotify_max_instances: 512
 somaxconn: 1024
 
-# ── Egress Whitelist ──────────────────────────────────────────────────
-squid_allowed_domains:
-  - ".anthropic.com"
-  - ".openai.com"
-  - ".voyageai.com"
+# ── Egress Whitelist (Smokescreen ACL) ───────────────────────────────
+# Smokescreen uses glob patterns: "*.example.com" matches subdomains.
+# Every domain added is a potential data exfiltration channel.
+egress_allowed_domains:
+  - "*.anthropic.com"
+  - "*.openai.com"
+  - "*.voyageai.com"
 # Uncomment to add more LLM providers:
-# squid_extra_domains:
-#   - ".groq.com"
-#   - ".googleapis.com"
-#   - ".x.ai"
+# egress_extra_domains:
+#   - "*.groq.com"
+#   - "*.googleapis.com"
+#   - "*.x.ai"
 
 # ── LiteLLM ──────────────────────────────────────────────────────────
 litellm_models:
@@ -89,8 +95,8 @@ openclaw_memory: "16G"
 openclaw_memory_reservation: "4G"
 docker_proxy_cpus: "0.5"
 docker_proxy_memory: "256M"
-squid_cpus: "0.5"
-squid_memory: "256M"
+smokescreen_cpus: "0.5"
+smokescreen_memory: "128M"
 litellm_cpus: "2.0"
 litellm_memory: "2G"
 redis_cpus: "0.5"

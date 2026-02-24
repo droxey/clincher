@@ -44,7 +44,7 @@
   ansible.builtin.command: >
     docker exec openclaw
     curl -sf -o /dev/null -w '%{http_code}'
-    -x http://openclaw-egress:3128 https://api.anthropic.com
+    -x http://openclaw-egress:4750 https://api.anthropic.com
   register: egress_allowed
   changed_when: false
   failed_when: false
@@ -53,7 +53,7 @@
   ansible.builtin.command: >
     docker exec openclaw
     curl -sf -o /dev/null -w '%{http_code}'
-    -x http://openclaw-egress:3128 https://example.com
+    -x http://openclaw-egress:4750 https://example.com
   register: egress_blocked
   changed_when: false
   failed_when: false

