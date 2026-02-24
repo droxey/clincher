@@ -115,7 +115,13 @@
     direction: outgoing
     default: allow
 
-- name: Allow SSH from admin IP (rate limited)
+- name: Allow SSH on non-default port
+  community.general.ufw:
+    rule: allow
+    to_port: "{{ ssh_port }}"
+    proto: tcp
+
+- name: Rate-limit SSH from admin IP (additional brute-force protection)
   community.general.ufw:
     rule: limit
     from_ip: "{{ admin_ip }}"

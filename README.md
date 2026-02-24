@@ -361,7 +361,10 @@ ADMIN_IP="YOUR_STATIC_IP"
 ufw default deny incoming
 ufw default allow outgoing
 
-# SSH on non-default port — rate-limited to admin IP only
+# SSH on non-default port
+ufw allow 9922/tcp
+
+# Rate-limit SSH from admin IP (additional brute-force protection)
 ufw limit from $ADMIN_IP to any port 9922 proto tcp
 ```
 
