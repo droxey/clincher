@@ -465,6 +465,7 @@ FROM golang:1.22-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 RUN git clone https://github.com/stripe/smokescreen.git . && \
+    git checkout v0.0.4 && \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o /smokescreen .
 
 FROM alpine:3.20
