@@ -5,10 +5,11 @@ model_list:
       model: "{{ model.model }}"
       api_key: "os.environ/{{ model.key_env }}"
 {% if model.max_budget is defined %}
+    model_info:
       max_budget: {{ model.max_budget }}
 {% endif %}
 {% if model.rpm is defined %}
-      rpm: {{ model.rpm }}
+    rpm: {{ model.rpm }}
 {% endif %}
 {% endfor %}
 

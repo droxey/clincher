@@ -45,10 +45,29 @@
 - name: Configure Telegram channel
   when: telegram_enabled | bool
   block:
-    - name: Set Telegram bot token
+    - name: Create Telegram bot token tempfile
+      ansible.builtin.tempfile:
+        state: file
+        suffix: ".telegram-token"
+      register: telegram_token_file
+      no_log: true
+
+    - name: Write Telegram bot token to tempfile
+      ansible.builtin.copy:
+        content: "{{ telegram_bot_token }}"
+        dest: "{{ telegram_token_file.path }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Copy Telegram token into container
+      ansible.builtin.command: docker cp "{{ telegram_token_file.path }}" openclaw:/tmp/.tg-token
+      changed_when: false
+      no_log: true
+
+    - name: Install Telegram token via file
       ansible.builtin.command: >
-        docker exec openclaw openclaw config set channels.telegram.token
-        "{{ telegram_bot_token }}"
+        docker exec openclaw sh -c
+        'openclaw config set channels.telegram.token "$(cat /tmp/.tg-token)" && rm -f /tmp/.tg-token'
       changed_when: false
       no_log: true
 
@@ -56,6 +75,14 @@
       ansible.builtin.command: >
         docker exec openclaw openclaw config set channels.telegram.streaming "progress"
       changed_when: false
+
+  always:
+    - name: Remove Telegram bot token tempfile
+      ansible.builtin.file:
+        path: "{{ telegram_token_file.path }}"
+        state: absent
+      no_log: true
+      when: telegram_token_file.path is defined
 
 # ── Step 8: Memory and RAG Configuration ─────────────────────────────
 - name: Configure memory provider

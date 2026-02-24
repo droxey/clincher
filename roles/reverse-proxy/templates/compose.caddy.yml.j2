@@ -10,6 +10,7 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks:
+      - ingress-net
       - proxy-net
     restart: unless-stopped
 
@@ -17,6 +18,9 @@ networks:
   proxy-net:
     external: true
     name: openclaw_proxy-net
+  ingress-net:
+    external: true
+    name: openclaw_ingress-net
 
 volumes:
   caddy-data:

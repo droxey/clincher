@@ -25,6 +25,15 @@
     mode: "0644"
   notify: rebuild egress
 
+- name: Deploy Smokescreen custom main.go
+  ansible.builtin.copy:
+    src: main.smokescreen.go
+    dest: "{{ openclaw_base_dir }}/build/smokescreen/main.go"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: rebuild egress
+
 - name: Deploy Smokescreen egress ACL
   ansible.builtin.template:
     src: smokescreen-acl.yaml.j2
