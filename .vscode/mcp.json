@@ -1,0 +1,24 @@
+{
+  "inputs": [
+    {
+      "id": "openclaw-url",
+      "type": "promptString",
+      "description": "OpenClaw gateway URL (e.g. https://openclaw.yourdomain.com)"
+    },
+    {
+      "id": "openclaw-token",
+      "type": "promptString",
+      "description": "OpenClaw gateway auth token (contents of /opt/openclaw/monitoring/.gateway-token on the server)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "openclaw": {
+      "type": "sse",
+      "url": "${input:openclaw-url}/sse",
+      "headers": {
+        "Authorization": "Bearer ${input:openclaw-token}"
+      }
+    }
+  }
+}
