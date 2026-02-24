@@ -53,10 +53,9 @@
   args:
     chdir: "{{ openclaw_base_dir }}"
 
-- name: Reduce sandbox concurrency for 8 GB host (monitoring uses ~544 MB)
-  ansible.builtin.command: >
-    docker exec openclaw openclaw config set agents.defaults.sandbox.docker.maxConcurrent 2
-  changed_when: false
+- name: Note monitoring resource cost
+  ansible.builtin.debug:
+    msg: "Monitoring stack adds ~544 MB RAM (Prometheus + Grafana + Redis exporter). On 64 GB host, no sandbox reduction needed."
 
 - name: Display Grafana access info
   ansible.builtin.debug:

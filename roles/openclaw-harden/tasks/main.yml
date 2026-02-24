@@ -45,6 +45,7 @@
 - name: Apply control UI security
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
+    - { key: 'gateway.controlUi.allowedOrigins', value: "'[\"https://{{ domain }}\"]'" }
     - { key: 'gateway.controlUi.allowInsecureAuth', value: 'false' }
     - { key: 'gateway.controlUi.dangerouslyDisableDeviceAuth', value: 'false' }
   changed_when: false

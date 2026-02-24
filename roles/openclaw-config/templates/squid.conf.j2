@@ -36,7 +36,7 @@ via off
 forwarded_for delete
 httpd_suppress_version_string on
 
-# Memory tuning — keep Squid lean on an 8 GB host (container limit: {{ squid_memory }})
+# Memory tuning — keep Squid lean (container limit: {{ squid_memory }})
 cache_mem 32 MB
 maximum_object_size_in_memory 256 KB
 # Disable disk cache — this proxy only tunnels CONNECT requests to LLM APIs

@@ -5,10 +5,10 @@ Full security posture — socket proxy, egress whitelist, and sandbox hardening.
 
 ### KVM VPS Specs
 
-- 4 vCPU
-- 8 GB RAM
-- 4 GB swap
-- 150 GB SSD
+- 16 vCPU
+- 64 GB RAM
+- 8 GB swap
+- 4 TB NVMe
 - Ubuntu 24.04
 
 ### Why Single-Server?
@@ -158,8 +158,8 @@ disable_ipv6: false                    # true → disables IPv6 system-wide
 telegram_enabled: true                 # false → skips Telegram channel setup
 
 # ── Resource Tuning ───────────────────────────────────
-openclaw_memory: "4G"                  # Increase for Growth/Production tier
-sandbox_max_concurrent: 3             # Reduce to 2 if monitoring_enabled
+openclaw_memory: "16G"                 # Tuned for 64 GB Production tier
+sandbox_max_concurrent: 8             # 8 × 1G = 8G max sandbox memory
 ```
 
 See `group_vars/all/vars.yml` for the full variable reference with all image versions, resource limits, LiteLLM model tiers, and security thresholds.
@@ -227,7 +227,7 @@ Update the image version in `vars.yml` and re-run:
 
 ```bash
 # In vars.yml, change:
-#   openclaw_version: "2026.2.17"  →  openclaw_version: "2026.3.0"
+#   openclaw_version: "2026.2.23"  →  openclaw_version: "2026.3.0"
 
 ansible-playbook playbook.yml --ask-vault-pass --tags config,deploy,harden,verify
 ```
@@ -300,9 +300,9 @@ newgrp docker
 docker compose version
 ```
 
-#### Docker Daemon Tuning (8 GB KVM)
+#### Docker Daemon Tuning
 
-Configure Docker for a memory-constrained KVM VPS: rotate container logs to prevent disk fill, enable live-restore so containers survive daemon restarts, and set a sane default for sandbox containers.
+Configure Docker for the KVM VPS: rotate container logs to prevent disk fill, enable live-restore so containers survive daemon restarts, and set a sane default for sandbox containers.
 
 ```bash
 mkdir -p /etc/docker
@@ -333,7 +333,7 @@ systemctl restart docker
 
 ```bash
 cat >> /etc/sysctl.d/99-openclaw.conf << 'EOF'
-# Prefer RAM over swap — only swap under real pressure (8 GB box with 4 GB swap)
+# Prefer RAM over swap — only swap under real pressure
 vm.swappiness = 10
 
 # Increase inotify limits for Docker overlay mounts and file watchers
@@ -347,7 +347,7 @@ EOF
 sysctl --system
 ```
 
-> **Why `vm.swappiness=10`?** On an 8 GB box running a latency-sensitive agent runtime, swapping degrades response times. Setting this low tells the kernel to prefer reclaiming page cache over swapping anonymous pages. The 4 GB swap still acts as a safety net if memory spikes during tool execution bursts.
+> **Why `vm.swappiness=10`?** On a box running a latency-sensitive agent runtime, swapping degrades response times. Setting this low tells the kernel to prefer reclaiming page cache over swapping anonymous pages. With 64 GB RAM, swapping is unlikely under normal load — the 8 GB swap acts as a safety net for extreme spikes during concurrent tool execution bursts.
 
 ### Step 2: Configure Firewall
 
@@ -496,7 +496,7 @@ via off
 forwarded_for delete
 httpd_suppress_version_string on
 
-# Memory tuning — keep Squid lean on an 8 GB host (container limit: 128 MB)
+# Memory tuning — keep Squid lean (container limit: 256 MB)
 cache_mem 32 MB
 maximum_object_size_in_memory 256 KB
 # Disable disk cache — this proxy only tunnels CONNECT requests to LLM APIs
@@ -629,12 +629,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 128M
+          cpus: "0.5"
+          memory: 256M
     restart: unless-stopped
 
   openclaw:
-    image: openclaw/openclaw:2026.2.17
+    image: openclaw/openclaw:2026.2.23
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
@@ -669,10 +669,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 4G
+          cpus: "8.0"
+          memory: 16G
         reservations:
-          memory: 2G
+          memory: 4G
     restart: unless-stopped
 
   litellm:
@@ -705,8 +705,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "2.0"
+          memory: 2G
     restart: unless-stopped
 
   openclaw-egress:
@@ -733,8 +733,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 128M
+          cpus: "0.5"
+          memory: 256M
     restart: unless-stopped
 
   redis:
@@ -751,7 +751,7 @@ services:
       - no-new-privileges:true
     command: >
       redis-server
-      --maxmemory 96mb
+      --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --save 300 10
       --appendonly no
@@ -766,8 +766,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 128M
+          cpus: "0.5"
+          memory: 512M
     restart: unless-stopped
 
 networks:
@@ -888,6 +888,9 @@ rm -f /tmp/.gw-token
 openclaw config set gateway.auth.allowTailscale false
 
 # ── Control UI Security ──────────────────────────────────────────────
+# allowedOrigins is REQUIRED since 2026.2.20 — startup fails closed without it.
+# Set to your domain. Use "*" only for local dev — never in production.
+openclaw config set gateway.controlUi.allowedOrigins '["https://YOURDOMAIN.COM"]'
 openclaw config set gateway.controlUi.allowInsecureAuth false
 openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth false
 
@@ -926,23 +929,23 @@ openclaw config set agents.defaults.sandbox.workspaceAccess "none"
 openclaw config set agents.defaults.sandbox.docker.network "none"
 openclaw config set agents.defaults.sandbox.docker.capDrop '["ALL"]'
 
-# ── Sandbox Resource Caps (prevents tool execution from OOMing the host) ──
-openclaw config set agents.defaults.sandbox.docker.memoryLimit "512m"
-openclaw config set agents.defaults.sandbox.docker.memorySwap "768m"
-openclaw config set agents.defaults.sandbox.docker.cpuLimit "0.5"
-openclaw config set agents.defaults.sandbox.docker.pidsLimit 256
+# ── Sandbox Resource Caps (prevents tool execution from consuming all host resources) ──
+openclaw config set agents.defaults.sandbox.docker.memoryLimit "1g"
+openclaw config set agents.defaults.sandbox.docker.memorySwap "1536m"
+openclaw config set agents.defaults.sandbox.docker.cpuLimit "1.0"
+openclaw config set agents.defaults.sandbox.docker.pidsLimit 512
 openclaw config set agents.defaults.sandbox.docker.ulimits.nofile.soft 1024
 openclaw config set agents.defaults.sandbox.docker.ulimits.nofile.hard 2048
-# Limit concurrent sandboxes: 3 × 512M = 1.5G max sandbox memory on 8 GB host
-openclaw config set agents.defaults.sandbox.docker.maxConcurrent 3
+# Concurrent sandboxes: 8 × 1G = 8G max sandbox memory on 64 GB host
+openclaw config set agents.defaults.sandbox.docker.maxConcurrent 8
 
 # ── Sandbox Lifecycle (prevents stale containers from eating disk) ────
 openclaw config set agents.defaults.sandbox.docker.idleHours 12
 openclaw config set agents.defaults.sandbox.docker.maxAgeDays 3
 
 # ── Token Cost Optimization ──────────────────────────────────────────
-# Clamp maxTokens to prevent runaway output costs (2026.2.17 auto-clamps
-# to contextWindow, but explicit is better than implicit)
+# Clamp maxTokens to prevent runaway output costs (auto-clamps to
+# contextWindow since 2026.2.17, but explicit is better than implicit)
 openclaw config set agents.defaults.maxTokens 4096
 # Route heartbeats through LiteLLM's cheapest model instead of Opus.
 # Heartbeats fire every 30 min — at Opus pricing, that's $2-5/day idle cost.
@@ -1082,7 +1085,7 @@ openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
 # Set the default model — use the strongest available for injection resistance
 openclaw config set agents.defaults.model "anthropic/claude-opus-4-6"
 # maxTokens capped at 4096 in Step 5 — override here if you need longer outputs
-# 2026.2.17 auto-clamps maxTokens to contextWindow, so invalid values fail fast
+# Auto-clamps maxTokens to contextWindow (since 2026.2.17), so invalid values fail fast
 
 # Voyage AI key for memory embeddings (Step 8) — also used by LiteLLM for
 # semantic cache embeddings (set in host .env during Step 4 and passed to both)
@@ -1145,10 +1148,6 @@ docker exec -it openclaw sh
 
 openclaw config set channels.telegram.token "YOUR_TELEGRAM_BOT_TOKEN"
 
-# Disable streaming — fixes a known crash in 2026.2.17 where streamed
-# responses cause the Telegram provider to drop the long-poll connection.
-openclaw config set channels.telegram.streamMode "off"
-
 # Verify channel connectivity
 openclaw doctor
 exit
@@ -1158,9 +1157,9 @@ exit
 docker compose restart openclaw
 ```
 
-> **Known issue (2026.2.17)**: Telegram streaming causes intermittent gateway crashes due to a race condition in the long-poll handler. Setting `streamMode: "off"` disables chunked response streaming to Telegram — messages arrive as complete responses instead. This adds slight perceived latency but eliminates the crash. Monitor the [OpenClaw changelog](https://github.com/openclaw) for a fix before re-enabling.
-
 > **Tip**: After restart, send a DM to your bot on Telegram. OpenClaw's DM pairing (Step 5) will prompt you to pair the bot with your account before it responds to messages.
+
+> **Upgrading from 2026.2.17?** The Telegram streaming race condition (long-poll handler crash) was fixed in 2026.2.19. If you previously set `streamMode "off"` as a workaround, you can re-enable streaming: `openclaw config set channels.telegram.streaming "progress"`.
 
 ### Step 8: Memory and RAG Configuration
 
@@ -1185,7 +1184,7 @@ exit
 > docker exec openclaw du -sh /root/.openclaw/memory/
 > ```
 >
-> If index size exceeds ~500 MB or `openclaw memory index --verify` begins reporting slow query times, run a full rebuild. There is no migration path to an external vector store (PostgreSQL + pgvector) in 2026.2.17 — external vector storage is not natively supported.
+> If index size exceeds ~500 MB or `openclaw memory index --verify` begins reporting slow query times, run a full rebuild. There is no migration path to an external vector store (PostgreSQL + pgvector) as of 2026.2.23 — external vector storage is not natively supported.
 
 ### Step 9: Reverse Proxy Setup
 
@@ -1352,12 +1351,11 @@ docker exec openclaw-redis redis-cli info memory | grep used_memory_human
 # Cache key count (grows as unique prompts are cached)
 docker exec openclaw-redis redis-cli dbsize
 
-# ── Resource Limits (8 GB budget) ───────────────────────────────────
-# Base: 4G openclaw + 1G litellm + 128M proxy + 128M squid + 128M redis = ~5.4G
-# Sandboxes: 3 × 512M (768M swap cap) = ~1.5G peak → total ~6.9G
+# ── Resource Limits (64 GB budget) ──────────────────────────────────
+# Base: 16G openclaw + 2G litellm + 256M proxy + 256M squid + 512M redis = ~19G
+# Sandboxes: 8 × 1G = ~8G peak → total ~27G
 # Monitoring overlay adds ~544M (256M prometheus + 256M grafana + 32M exporter)
-# With monitoring: reduce maxConcurrent sandboxes to 2, total ~7.5G
-# Remaining covers: OS page cache, Docker daemon, reverse proxy
+# Remaining ~36G covers: OS page cache, Docker daemon, reverse proxy, growth
 docker stats --no-stream
 
 # ── Network Connectivity ─────────────────────────────────────────────
@@ -1527,11 +1525,11 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Agents can't reach LLM APIs | `docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness` | Verify LiteLLM is healthy, check `agents.defaults.apiBase` points to `http://openclaw-litellm:4000`, check `ANTHROPIC_API_KEY` in `/opt/openclaw/.env` |
 | LiteLLM can't reach providers | `docker exec openclaw-litellm curl -x http://openclaw-egress:3128 -I https://api.anthropic.com` | Check squid.conf whitelist, verify `HTTP_PROXY` env var, check `localnet` ACL subnet |
 | Memory index fails | `docker exec openclaw openclaw memory index --verify` | Verify Voyage AI key, check `.voyageai.com` in squid.conf whitelist |
-| Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Set `channels.telegram.streamMode "off"` (Step 7). Known issue in 2026.2.17 — streaming causes long-poll race condition |
+| Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Check channel token and pairing status. If upgrading from 2026.2.17, the streaming race condition was fixed in 2026.2.19 — remove legacy `streamMode "off"` if present |
 | Channel not connecting | `docker exec openclaw openclaw doctor` | Check channel token, verify `dmPolicy`, check pairing status |
 | Container keeps restarting | `docker compose logs <service> --tail 100` | Check resource limits (`docker stats`), verify config files are readable |
 | Squid blocks legitimate traffic | `docker logs openclaw-egress` | Check `squid.conf` ACLs, verify `localnet` matches `openclaw-net` subnet |
-| Container OOM-killed | `dmesg \| grep -i oom`, `docker inspect <container> --format '{{.State.OOMKilled}}'` | Check `docker stats` — on 8 GB host, total container limits must stay under ~4.5G. Reduce `maxTokens` or concurrent sandbox count if openclaw peaks |
+| Container OOM-killed | `dmesg \| grep -i oom`, `docker inspect <container> --format '{{.State.OOMKilled}}'` | Check `docker stats` — verify the OOM'd container's memory limit. On 64 GB host, individual container limits are the constraint, not total host memory. Increase the specific container's limit or reduce concurrent sandbox count |
 | High swap usage | `free -h`, `vmstat 1 5` | If swap > 1 GB consistently, reduce `agents.defaults.sandbox.docker.memoryLimit` or lower openclaw memory limit to 3G |
 | Config error after update | `docker exec openclaw openclaw doctor --repair` | Restore from backup: `docker exec openclaw cp /root/.openclaw/config.json.bak /root/.openclaw/config.json` and restart. See Step 5 backup note |
 | Redis unreachable / LiteLLM cache errors | `docker exec openclaw-redis redis-cli ping`, `docker logs openclaw-litellm --tail 50 \| grep -i redis` | Verify redis container is healthy, check `REDIS_HOST` env var in LiteLLM, verify both are on `openclaw-net`. LiteLLM falls back to no-cache if Redis is unavailable — service continues, just without caching |
@@ -1730,13 +1728,13 @@ Add the watchdog to root's crontab alongside the existing backup and rotation jo
 */5 * * * * /opt/openclaw/monitoring/watchdog.sh 2>/dev/null
 ```
 
-> **Why 5-minute intervals?** Fast enough to catch problems before users report them, slow enough to avoid cron overhead on an 8 GB host. For tighter monitoring, reduce to `*/2` — but ensure the alert cooldown prevents notification floods.
+> **Why 5-minute intervals?** Fast enough to catch problems before users report them, slow enough to avoid cron overhead. For tighter monitoring, reduce to `*/2` — but ensure the alert cooldown prevents notification floods.
 
 #### 13.2.1 Optional: Prometheus + Grafana Monitoring Stack
 
 The watchdog script catches binary states (up/down, healthy/unhealthy). For continuous metrics — request latency, token spend over time, cache hit rates, error percentages — add Prometheus and Grafana as a Compose overlay.
 
-**Resource cost**: ~256 MB RAM total (Prometheus ~128 MB, Grafana ~128 MB). On the Starter tier (8 GB), this requires reducing sandbox concurrency from 3 to 2. On Growth tier (16 GB+), it fits without trade-offs.
+**Resource cost**: ~256 MB RAM total (Prometheus ~128 MB, Grafana ~128 MB). On the Production tier (64 GB), this fits comfortably with no trade-offs. On Starter tier (8 GB), enabling the monitoring stack requires reducing sandbox concurrency.
 
 Create the Prometheus scrape config:
 
@@ -1904,7 +1902,7 @@ openclaw.yourdomain.com {
 | Error rate | `rate(litellm_error_metric_total[5m])` | Failed LLM calls per second |
 | Redis memory | `redis_memory_used_bytes / redis_memory_max_bytes` | Cache memory pressure |
 
-> **Starter tier trade-off**: On the 8 GB box, enabling the monitoring stack pushes total worst-case memory to ~8.1G. To compensate, reduce concurrent sandboxes from 3 to 2: `openclaw config set agents.defaults.sandbox.docker.maxConcurrent 2`. On Growth tier (16 GB+), this trade-off is unnecessary.
+> **Note for smaller servers**: On an 8 GB Starter tier box, enabling the monitoring stack pushes total worst-case memory to ~8.1G. Compensate by reducing concurrent sandboxes: `openclaw config set agents.defaults.sandbox.docker.maxConcurrent 2`. On the Production tier (64 GB), this trade-off is unnecessary.
 
 #### 13.3 Unattended Security Updates
 
@@ -1994,7 +1992,7 @@ For Healthchecks.io integration, add this to the end of the watchdog script:
 | **RPO** | **24 hours** (default) | Daily backup cron (Step 11). Reduce to 1 hour with `0 * * * *` cron schedule — but verify disk space. |
 | **MTTR** | **< 45 minutes** | Includes diagnosis time. Watchdog alerts (§13.2) + external monitoring (§13.4) cut detection delay to < 10 minutes. |
 
-> **RPO trade-off**: Hourly backups on a 150 GB SSD consume ~2 GB/day (14-day retention). On the Starter tier, that's aggressive. Consider hourly for the config backup only (< 1 MB) and keep the data volume on a daily schedule.
+> **RPO trade-off**: Hourly backups consume ~2 GB/day (14-day retention). On a 4 TB NVMe (Production tier), this is negligible. On smaller Starter tiers, consider hourly for the config backup only (< 1 MB) and keep the data volume on a daily schedule.
 
 #### 13.6 Backup Verification
 
@@ -2199,7 +2197,7 @@ A pre-staged standby is a pre-provisioned server that mirrors the production con
 
 ```bash
 # On the standby server
-docker pull openclaw/openclaw:2026.2.17
+docker pull openclaw/openclaw:2026.2.23
 docker pull tecnativa/docker-socket-proxy:0.6.0
 docker pull ubuntu/squid:6.6-24.04_edge
 docker pull ghcr.io/berriai/litellm:main-v1.81.3-stable
@@ -2348,9 +2346,9 @@ The fastest path to handling more concurrent users and heavier tool execution lo
 
 | Tier | Spec | Use Case |
 |------|------|----------|
-| **Starter** (current) | 4 vCPU, 8 GB RAM, 150 GB SSD | 1-3 concurrent users, light tool use. Monitoring overlay requires reducing sandboxes to 2. |
-| **Growth** | 8 vCPU, 16 GB RAM, 300 GB SSD | 5-10 concurrent users, monitoring + full sandbox concurrency |
-| **Production** | 16 vCPU, 32 GB RAM, 500 GB NVMe | 10-25 concurrent users, heavy sandbox + memory/RAG + room for Redis growth |
+| **Starter** | 4 vCPU, 8 GB RAM, 500 GB NVMe | 1-3 concurrent users, light tool use. Monitoring requires reducing sandboxes. |
+| **Growth** | 8 vCPU, 16 GB RAM, 1 TB NVMe | 5-10 concurrent users, monitoring + full sandbox concurrency |
+| **Production** (current) | 16 vCPU, 64 GB RAM, 4 TB NVMe | 10-25 concurrent users, heavy sandbox + monitoring + memory/RAG + multi-instance |
 
 After upgrading the server, update `docker-compose.yml` resource limits:
 
@@ -2512,7 +2510,7 @@ The scaling pattern is **bot partitioning**: create multiple Telegram bots (via 
 cat > /opt/openclaw/compose.secondary.yml << 'EOF'
 services:
   openclaw-secondary:
-    image: openclaw/openclaw:2026.2.17
+    image: openclaw/openclaw:2026.2.23
     container_name: openclaw-secondary
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375

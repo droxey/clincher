@@ -6,8 +6,8 @@ This repository is the **OpenClaw Hardened Single-Server Deployment** guide — 
 
 **This is a documentation-only repository.** There is no application source code, no build system, and no automated tests. All content lives in Markdown files and a Claude Code settings file.
 
-- **Target**: 1 Ubuntu 24.04 KVM VPS (4 vCPU, 8 GB RAM, 4 GB swap, 150 GB SSD)
-- **OpenClaw Version**: `openclaw/openclaw:2026.2.17` (pinned)
+- **Target**: 1 Ubuntu 24.04 KVM VPS (16 vCPU, 64 GB RAM, 8 GB swap, 4 TB NVMe)
+- **OpenClaw Version**: `openclaw/openclaw:2026.2.23` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
 
 ## Repository Structure
@@ -16,32 +16,31 @@ This repository is the **OpenClaw Hardened Single-Server Deployment** guide — 
 clincher/
 ├── CLAUDE.md                    # This file — project context + style guide for AI assistants
 ├── README.md                    # Primary artifact: 14-step deployment guide + Ansible docs
-├── README_SERVER_SETUP.md       # Server setup and hardening reference (Steps 1-5, 10)
-├── RESEARCH.md                  # Security research and deployment plan audit
+├── RESEARCH_CLAW.md             # Comprehensive TL;DR deep-dive on OpenClaw system
 ├── USECASES.md                  # Community use cases and example deployments
+├── LINKS.md                     # Curated links to skills, use cases, community resources
 ├── .claude/
 │   └── settings.local.json      # Claude Code permissions and output style config
-└── ansible/                     # Ansible automation for the deployment guide
-    ├── ansible.cfg
-    ├── requirements.yml
-    ├── playbook.yml
-    ├── inventory/hosts.yml
-    ├── group_vars/all/
-    │   ├── vars.yml
-    │   └── vault.yml.example
-    └── roles/
-        ├── base/                # Steps 1-2: SSH, Docker, sysctl, UFW, fail2ban
-        ├── openclaw-config/     # Step 3: Squid, LiteLLM, Compose templates
-        ├── openclaw-deploy/     # Step 4: docker compose up, ACL tighten
-        ├── openclaw-harden/     # Step 5: gateway/sandbox hardening
-        ├── openclaw-integrate/  # Steps 6-8: API, Telegram, memory
-        ├── reverse-proxy/       # Step 9: Caddy/Tunnel/Tailscale
-        ├── verify/              # Step 10: post-deploy verification
-        ├── maintenance/         # Steps 11+13: backups, watchdog, cron
-        └── monitoring/          # Step 13.2.1: Prometheus + Grafana (optional)
+├── ansible.cfg                  # SSH pipelining, YAML output, retry config
+├── requirements.yml             # Galaxy collections (community.docker, community.general)
+├── playbook.yml                 # Orchestrates all roles in deployment order
+├── inventory/hosts.yml          # Target server IP and SSH config
+├── group_vars/all/
+│   ├── vars.yml                 # All configuration variables
+│   └── vault.yml.example        # Secret template (copy → vault.yml → encrypt)
+└── roles/                       # Ansible automation for the deployment guide
+    ├── base/                    # Steps 1-2: SSH, Docker, sysctl, UFW, fail2ban
+    ├── openclaw-config/         # Step 3: Squid, LiteLLM, Compose templates
+    ├── openclaw-deploy/         # Step 4: docker compose up, ACL tighten
+    ├── openclaw-harden/         # Step 5: gateway/sandbox hardening
+    ├── openclaw-integrate/      # Steps 6-8: API, Telegram, memory
+    ├── reverse-proxy/           # Step 9: Caddy/Tunnel/Tailscale
+    ├── verify/                  # Step 10: post-deploy verification
+    ├── maintenance/             # Steps 11+13: backups, watchdog, cron
+    └── monitoring/              # Step 13.2.1: Prometheus + Grafana (optional)
 ```
 
-No Dockerfiles or CI/CD pipelines. Docker Compose specs and shell scripts are embedded in `README.md`. The `ansible/` directory provides Jinja2-templated versions of these same configs for automated deployment.
+No Dockerfiles or CI/CD pipelines. Docker Compose specs and shell scripts are embedded in `README.md`. The Ansible files at the repo root provide Jinja2-templated versions of these same configs for automated deployment.
 
 ## Architecture
 
@@ -79,12 +78,14 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 | Service | Image | Purpose | Network |
 |---------|-------|---------|---------|
 | `docker-proxy` | `tecnativa/docker-socket-proxy:0.6.0` | Sandboxed Docker API access (EXEC only) | `openclaw-net` |
-| `openclaw` | `openclaw/openclaw:2026.2.17` | Main gateway — agent runtime, tool execution | `openclaw-net` + `proxy-net` |
+| `openclaw` | `openclaw/openclaw:2026.2.23` | Main gateway — agent runtime, tool execution | `openclaw-net` + `proxy-net` |
+| `litellm` | `ghcr.io/berriai/litellm:main-v1.81.3-stable` | LLM API proxy — routing, cost controls, caching | `openclaw-net` |
 | `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | Egress whitelist proxy for LLM API calls | `openclaw-net` + `egress-net` |
+| `redis` | `redis/redis-stack-server:7.4.0-v3` | Semantic cache for LiteLLM (RediSearch module) | `openclaw-net` |
 
 ### Networks
 
-- **`openclaw-net`**: Internal bridge network — no internet access. All three services attach to this.
+- **`openclaw-net`**: Internal bridge network — no internet access. All five services attach to this.
 - **`egress-net`**: Bridge network connecting the egress proxy to the internet for whitelisted LLM API calls.
 - **`proxy-net`**: Bridge network connecting the reverse proxy (Caddy/Nginx) to the OpenClaw gateway.
 
@@ -110,7 +111,7 @@ The `README.md` follows a strict 14-step deployment sequence. When editing, pres
 4. **Deploy** — `docker compose up -d`, tighten Squid ACL
 5. **Gateway and Sandbox Hardening** — Auth, sandbox isolation, tool denials, SOUL.md
 6. **API Keys and Model Configuration** — LLM provider keys, default model
-7. **Channel Integration** — Discord, WhatsApp, Telegram, Signal
+7. **Channel Integration** — Telegram (primary; Discord, WhatsApp, Signal supported but not documented here)
 8. **Memory and RAG Configuration** — Voyage AI embeddings, QMD indexing
 9. **Reverse Proxy Setup** — Caddy (recommended) or Cloudflare Tunnel
 10. **Verification** — Security audit, health checks, connectivity tests

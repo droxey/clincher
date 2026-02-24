@@ -7,7 +7,7 @@ openclaw_base_dir: /opt/openclaw
 domain: "openclaw.yourdomain.com"
 
 # ── Image Versions (pinned) ───────────────────────────────────────────
-openclaw_version: "2026.2.17"
+openclaw_version: "2026.2.23"
 docker_proxy_version: "0.6.0"
 squid_version: "6.6-24.04_edge"
 litellm_version: "main-v1.81.3-stable"
@@ -64,7 +64,7 @@ litellm_models:
 
 litellm_cache_ttl: 3600
 litellm_similarity_threshold: 0.8
-redis_maxmemory: "96mb"
+redis_maxmemory: "256mb"
 
 # ── OpenClaw Hardening ────────────────────────────────────────────────
 openclaw_default_model: "anthropic/claude-opus-4-6"
@@ -72,26 +72,26 @@ openclaw_heartbeat_model: "anthropic/claude-3-5-haiku-latest"
 openclaw_max_tokens: 4096
 
 # Sandbox
-sandbox_memory_limit: "512m"
-sandbox_memory_swap: "768m"
-sandbox_cpu_limit: "0.5"
-sandbox_pids_limit: 256
-sandbox_max_concurrent: 3
+sandbox_memory_limit: "1g"
+sandbox_memory_swap: "1536m"
+sandbox_cpu_limit: "1.0"
+sandbox_pids_limit: 512
+sandbox_max_concurrent: 8
 sandbox_idle_hours: 12
 sandbox_max_age_days: 3
 
-# Container resource limits
-openclaw_cpus: "2.0"
-openclaw_memory: "4G"
-openclaw_memory_reservation: "2G"
-docker_proxy_cpus: "0.25"
-docker_proxy_memory: "128M"
-squid_cpus: "0.25"
-squid_memory: "128M"
-litellm_cpus: "1.0"
-litellm_memory: "1G"
-redis_cpus: "0.25"
-redis_memory: "128M"
+# Container resource limits (tuned for 16 vCPU / 64 GB RAM host)
+openclaw_cpus: "8.0"
+openclaw_memory: "16G"
+openclaw_memory_reservation: "4G"
+docker_proxy_cpus: "0.5"
+docker_proxy_memory: "256M"
+squid_cpus: "0.5"
+squid_memory: "256M"
+litellm_cpus: "2.0"
+litellm_memory: "2G"
+redis_cpus: "0.5"
+redis_memory: "512M"
 
 # Tool denials
 openclaw_agent_tool_denials:
