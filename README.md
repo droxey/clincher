@@ -75,11 +75,13 @@ The `ansible/` directory contains a playbook that automates Steps 1-13 of this g
 On your **local machine** (the control node):
 
 ```bash
+apt install python3 python3-pip ansible-core
+
 # Install Ansible (2.16+)
 pip install ansible
 
 # Install required collections
-cd ansible
+cd clincher
 ansible-galaxy collection install -r requirements.yml
 ```
 
