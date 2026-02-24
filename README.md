@@ -726,12 +726,12 @@ services:
     tmpfs:
       - /var/spool/squid:size=64M
       - /var/log/squid:size=32M
-      - /var/run:size=8M
+      - /run:size=8M
       - /tmp:size=16M
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "squidclient -h localhost mgr:info 2>&1 | grep -q 'Squid Object Cache' || exit 1"]
+      test: ["CMD-SHELL", "squid -k check 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
