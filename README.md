@@ -620,6 +620,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16M
+      - /run:size=8M
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -698,6 +699,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      openclaw-egress:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1"]
       interval: 30s
@@ -724,6 +727,7 @@ services:
       - /var/spool/squid:size=64M
       - /var/log/squid:size=32M
       - /var/run:size=8M
+      - /tmp:size=16M
     security_opt:
       - no-new-privileges:true
     healthcheck:
