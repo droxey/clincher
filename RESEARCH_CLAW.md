@@ -96,8 +96,8 @@ User Message → Channel (Telegram/Discord) → Gateway → LLM (via LiteLLM) �
 
 | Container | Image | CPU | RAM | Role | Talks To |
 |-----------|-------|-----|-----|------|----------|
-| `openclaw` | `openclaw/openclaw:2026.2.23` | 8.0 | 16G | Agent runtime, Gateway, Web UI | docker-proxy, litellm, egress |
-| `openclaw-docker-proxy` | `tecnativa/docker-socket-proxy:0.6.0` | 0.5 | 256M | Sandboxed Docker API | host docker.sock |
+| `openclaw` | `ghcr.io/openclaw/openclaw:2026.2.23` | 8.0 | 16G | Agent runtime, Gateway, Web UI | docker-proxy, litellm, egress |
+| `openclaw-docker-proxy` | `ghcr.io/tecnativa/docker-socket-proxy:v0.4.2` | 0.5 | 256M | Sandboxed Docker API | host docker.sock |
 | `openclaw-egress` | `ubuntu/squid:6.6-24.04_edge` | 0.5 | 256M | Egress whitelist proxy | internet (whitelisted) |
 | `openclaw-litellm` | `ghcr.io/berriai/litellm:main-v1.81.3-stable` | 2.0 | 2G | LLM proxy + spend caps | LLM providers (via egress) |
 | `openclaw-redis` | `redis/redis-stack-server:7.4.0-v3` | 0.5 | 512M | Semantic cache (vector search) | litellm |

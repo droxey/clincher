@@ -588,7 +588,7 @@ EOF
 cat > /opt/openclaw/docker-compose.yml << 'COMPOSE_EOF'
 services:
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:0.6.0
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
     container_name: openclaw-docker-proxy
     environment:
       CONTAINERS: "1"
@@ -636,7 +636,7 @@ services:
     restart: unless-stopped
 
   openclaw:
-    image: openclaw/openclaw:2026.2.23
+    image: ghcr.io/openclaw/openclaw:2026.2.23
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
@@ -2199,8 +2199,8 @@ A pre-staged standby is a pre-provisioned server that mirrors the production con
 
 ```bash
 # On the standby server
-docker pull openclaw/openclaw:2026.2.23
-docker pull tecnativa/docker-socket-proxy:0.6.0
+docker pull ghcr.io/openclaw/openclaw:2026.2.23
+docker pull ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
 docker pull ubuntu/squid:6.6-24.04_edge
 docker pull ghcr.io/berriai/litellm:main-v1.81.3-stable
 docker pull redis/redis-stack-server:7.4.0-v3
@@ -2512,7 +2512,7 @@ The scaling pattern is **bot partitioning**: create multiple Telegram bots (via 
 cat > /opt/openclaw/compose.secondary.yml << 'EOF'
 services:
   openclaw-secondary:
-    image: openclaw/openclaw:2026.2.23
+    image: ghcr.io/openclaw/openclaw:2026.2.23
     container_name: openclaw-secondary
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375

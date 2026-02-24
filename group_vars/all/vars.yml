@@ -11,7 +11,7 @@ local_ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
 
 # ── Image Versions (pinned) ───────────────────────────────────────────
 openclaw_version: "2026.2.23"
-docker_proxy_version: "0.6.0"
+docker_proxy_version: "v0.4.2"
 squid_version: "6.6-24.04_edge"
 litellm_version: "main-v1.81.3-stable"
 redis_version: "7.4.0-v3"

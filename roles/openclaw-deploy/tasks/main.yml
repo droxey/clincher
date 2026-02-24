@@ -6,8 +6,8 @@
     name: "{{ item }}"
     source: pull
   loop:
-    - "openclaw/openclaw:{{ openclaw_version }}"
-    - "tecnativa/docker-socket-proxy:{{ docker_proxy_version }}"
+    - "ghcr.io/openclaw/openclaw:{{ openclaw_version }}"
+    - "ghcr.io/tecnativa/docker-socket-proxy:{{ docker_proxy_version }}"
     - "ubuntu/squid:{{ squid_version }}"
     - "ghcr.io/berriai/litellm:{{ litellm_version }}"
     - "redis/redis-stack-server:{{ redis_version }}"
