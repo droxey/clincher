@@ -52,9 +52,9 @@
       changed_when: false
       no_log: true
 
-    - name: Disable Telegram streaming (known crash in 2026.2.17)
+    - name: Configure Telegram streaming (fixed in 2026.2.19+)
       ansible.builtin.command: >
-        docker exec openclaw openclaw config set channels.telegram.streamMode "off"
+        docker exec openclaw openclaw config set channels.telegram.streaming "progress"
       changed_when: false
 
 # ── Step 8: Memory and RAG Configuration ─────────────────────────────

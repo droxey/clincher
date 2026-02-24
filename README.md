@@ -226,7 +226,7 @@ Update the image version in `vars.yml` and re-run:
 
 ```bash
 # In vars.yml, change:
-#   openclaw_version: "2026.2.17"  →  openclaw_version: "2026.3.0"
+#   openclaw_version: "2026.2.23"  →  openclaw_version: "2026.3.0"
 
 ansible-playbook playbook.yml --ask-vault-pass --tags config,deploy,harden,verify
 ```
@@ -633,7 +633,7 @@ services:
     restart: unless-stopped
 
   openclaw:
-    image: openclaw/openclaw:2026.2.17
+    image: openclaw/openclaw:2026.2.23
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
@@ -887,6 +887,9 @@ rm -f /tmp/.gw-token
 openclaw config set gateway.auth.allowTailscale false
 
 # ── Control UI Security ──────────────────────────────────────────────
+# allowedOrigins is REQUIRED since 2026.2.20 — startup fails closed without it.
+# Set to your domain. Use "*" only for local dev — never in production.
+openclaw config set gateway.controlUi.allowedOrigins '["https://YOURDOMAIN.COM"]'
 openclaw config set gateway.controlUi.allowInsecureAuth false
 openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth false
 
@@ -940,8 +943,8 @@ openclaw config set agents.defaults.sandbox.docker.idleHours 12
 openclaw config set agents.defaults.sandbox.docker.maxAgeDays 3
 
 # ── Token Cost Optimization ──────────────────────────────────────────
-# Clamp maxTokens to prevent runaway output costs (2026.2.17 auto-clamps
-# to contextWindow, but explicit is better than implicit)
+# Clamp maxTokens to prevent runaway output costs (auto-clamps to
+# contextWindow since 2026.2.17, but explicit is better than implicit)
 openclaw config set agents.defaults.maxTokens 4096
 # Route heartbeats through LiteLLM's cheapest model instead of Opus.
 # Heartbeats fire every 30 min — at Opus pricing, that's $2-5/day idle cost.
@@ -1081,7 +1084,7 @@ openclaw config set agents.defaults.apiBase "http://openclaw-litellm:4000"
 # Set the default model — use the strongest available for injection resistance
 openclaw config set agents.defaults.model "anthropic/claude-opus-4-6"
 # maxTokens capped at 4096 in Step 5 — override here if you need longer outputs
-# 2026.2.17 auto-clamps maxTokens to contextWindow, so invalid values fail fast
+# Auto-clamps maxTokens to contextWindow (since 2026.2.17), so invalid values fail fast
 
 # Voyage AI key for memory embeddings (Step 8) — also used by LiteLLM for
 # semantic cache embeddings (set in host .env during Step 4 and passed to both)
@@ -1144,10 +1147,6 @@ docker exec -it openclaw sh
 
 openclaw config set channels.telegram.token "YOUR_TELEGRAM_BOT_TOKEN"
 
-# Disable streaming — fixes a known crash in 2026.2.17 where streamed
-# responses cause the Telegram provider to drop the long-poll connection.
-openclaw config set channels.telegram.streamMode "off"
-
 # Verify channel connectivity
 openclaw doctor
 exit
@@ -1157,9 +1156,9 @@ exit
 docker compose restart openclaw
 ```
 
-> **Known issue (2026.2.17)**: Telegram streaming causes intermittent gateway crashes due to a race condition in the long-poll handler. Setting `streamMode: "off"` disables chunked response streaming to Telegram — messages arrive as complete responses instead. This adds slight perceived latency but eliminates the crash. Monitor the [OpenClaw changelog](https://github.com/openclaw) for a fix before re-enabling.
-
 > **Tip**: After restart, send a DM to your bot on Telegram. OpenClaw's DM pairing (Step 5) will prompt you to pair the bot with your account before it responds to messages.
+
+> **Upgrading from 2026.2.17?** The Telegram streaming race condition (long-poll handler crash) was fixed in 2026.2.19. If you previously set `streamMode "off"` as a workaround, you can re-enable streaming: `openclaw config set channels.telegram.streaming "progress"`.
 
 ### Step 8: Memory and RAG Configuration
 
@@ -1184,7 +1183,7 @@ exit
 > docker exec openclaw du -sh /root/.openclaw/memory/
 > ```
 >
-> If index size exceeds ~500 MB or `openclaw memory index --verify` begins reporting slow query times, run a full rebuild. There is no migration path to an external vector store (PostgreSQL + pgvector) in 2026.2.17 — external vector storage is not natively supported.
+> If index size exceeds ~500 MB or `openclaw memory index --verify` begins reporting slow query times, run a full rebuild. There is no migration path to an external vector store (PostgreSQL + pgvector) as of 2026.2.23 — external vector storage is not natively supported.
 
 ### Step 9: Reverse Proxy Setup
 
@@ -1526,7 +1525,7 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Agents can't reach LLM APIs | `docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness` | Verify LiteLLM is healthy, check `agents.defaults.apiBase` points to `http://openclaw-litellm:4000`, check `ANTHROPIC_API_KEY` in `/opt/openclaw/.env` |
 | LiteLLM can't reach providers | `docker exec openclaw-litellm curl -x http://openclaw-egress:3128 -I https://api.anthropic.com` | Check squid.conf whitelist, verify `HTTP_PROXY` env var, check `localnet` ACL subnet |
 | Memory index fails | `docker exec openclaw openclaw memory index --verify` | Verify Voyage AI key, check `.voyageai.com` in squid.conf whitelist |
-| Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Set `channels.telegram.streamMode "off"` (Step 7). Known issue in 2026.2.17 — streaming causes long-poll race condition |
+| Telegram crashes / drops messages | `docker compose logs openclaw --tail 100 \| grep -i telegram` | Check channel token and pairing status. If upgrading from 2026.2.17, the streaming race condition was fixed in 2026.2.19 — remove legacy `streamMode "off"` if present |
 | Channel not connecting | `docker exec openclaw openclaw doctor` | Check channel token, verify `dmPolicy`, check pairing status |
 | Container keeps restarting | `docker compose logs <service> --tail 100` | Check resource limits (`docker stats`), verify config files are readable |
 | Squid blocks legitimate traffic | `docker logs openclaw-egress` | Check `squid.conf` ACLs, verify `localnet` matches `openclaw-net` subnet |
@@ -2198,7 +2197,7 @@ A pre-staged standby is a pre-provisioned server that mirrors the production con
 
 ```bash
 # On the standby server
-docker pull openclaw/openclaw:2026.2.17
+docker pull openclaw/openclaw:2026.2.23
 docker pull tecnativa/docker-socket-proxy:0.6.0
 docker pull ubuntu/squid:6.6-24.04_edge
 docker pull ghcr.io/berriai/litellm:main-v1.81.3-stable
@@ -2511,7 +2510,7 @@ The scaling pattern is **bot partitioning**: create multiple Telegram bots (via 
 cat > /opt/openclaw/compose.secondary.yml << 'EOF'
 services:
   openclaw-secondary:
-    image: openclaw/openclaw:2026.2.17
+    image: openclaw/openclaw:2026.2.23
     container_name: openclaw-secondary
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375

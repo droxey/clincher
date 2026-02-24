@@ -7,7 +7,7 @@ openclaw_base_dir: /opt/openclaw
 domain: "openclaw.yourdomain.com"
 
 # ── Image Versions (pinned) ───────────────────────────────────────────
-openclaw_version: "2026.2.17"
+openclaw_version: "2026.2.23"
 docker_proxy_version: "0.6.0"
 squid_version: "6.6-24.04_edge"
 litellm_version: "main-v1.81.3-stable"
