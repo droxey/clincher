@@ -1,7 +1,7 @@
 # OpenClaw Hardened VPS Deployment (2026.2)
 
-**Production-grade, least-privilege OpenClaw deployment on a single server using Docker Compose.**
-Full security posture — socket proxy, egress whitelist, and sandbox hardening.
+**Least-privilege OpenClaw deployment on a single server using Docker Compose.**
+Socket proxy, egress whitelist, and sandbox hardening included.
 
 ### KVM VPS Specs
 
@@ -13,7 +13,7 @@ Full security posture — socket proxy, egress whitelist, and sandbox hardening.
 
 ### Why Single-Server?
 
-A single server with Docker Compose delivers the full OpenClaw security posture — socket proxy, egress whitelist, sandbox isolation, and all hardening steps — with roughly 80% less operational complexity than multi-node alternatives. Three bridge networks enforce least-privilege communication without requiring overlay networking or cluster coordination.
+A single server with Docker Compose gives you socket proxy, egress whitelist, sandbox isolation, and all hardening steps without the operational overhead of multi-node setups. Three bridge networks enforce least-privilege communication — no overlay networking or cluster coordination needed.
 
 ### Architecture
 
@@ -68,7 +68,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 
 ## Automated Deployment (Ansible)
 
-The `ansible/` directory contains a complete Ansible playbook that automates Steps 1-13 of this guide. One command turns a fresh Ubuntu 24.04 VPS into a fully hardened OpenClaw deployment — SSH hardening, firewall, Docker, all five containers, gateway hardening, channel integration, reverse proxy, backups, and monitoring.
+The `ansible/` directory contains a playbook that automates Steps 1-13 of this guide. One `ansible-playbook` run takes a fresh Ubuntu 24.04 VPS through SSH hardening, firewall, Docker, all five containers, gateway hardening, channel integration, reverse proxy, backups, and monitoring.
 
 ### Prerequisites
 
@@ -2336,7 +2336,7 @@ rm -f /tmp/drill-data.tar.gz
 
 This deployment runs a single OpenClaw Gateway process on a single server. OpenClaw's architecture — single-process Gateway, embedded LanceDB for memory, file-based session state — is inherently vertical-first. There is no built-in clustering or replica coordination.
 
-Scaling is a phased journey: upgrade the box, then separate concerns, then partition across instances.
+The scaling path: upgrade the box first, then separate concerns, then partition across instances.
 
 #### 14.1 Phase 1 — Vertical Scaling (First Move)
 
