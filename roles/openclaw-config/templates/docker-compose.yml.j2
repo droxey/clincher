@@ -132,8 +132,6 @@ services:
     command:
       - "--egress-acl-file=/etc/smokescreen/acl.yaml"
       - "--listen-ip=0.0.0.0"
-      - "--expose-prometheus-metrics"
-      - "--prometheus-listen-ip=0.0.0.0"
       - "--deny-range=10.0.0.0/8"
       - "--deny-range=172.16.0.0/12"
       - "--deny-range=192.168.0.0/16"
