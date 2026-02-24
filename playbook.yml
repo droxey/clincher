@@ -8,6 +8,107 @@
 #
 # Tags: base, config, deploy, harden, integrate, proxy, verify, maintenance, monitoring
 
+# ── Bootstrap: transition fresh servers from port 22 → ssh_port ──────────
+# On a fresh VPS, SSH listens on port 22 as root. This play connects on
+# port 22, creates the deploy user, opens the hardened SSH port, and reloads
+# sshd. It is a no-op if ssh_port is already reachable (idempotent re-runs).
+- name: Bootstrap SSH on fresh server
+  hosts: openclaw
+  gather_facts: false
+  become: true
+  tags: [base]
+  vars:
+    ansible_port: 22
+    ansible_user: root
+
+  tasks:
+    - name: Check if target SSH port is already reachable
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ssh_port }}"
+        timeout: 5
+      delegate_to: localhost
+      become: false
+      ignore_errors: true
+      register: target_port_check
+
+    - name: Bootstrap SSH hardening
+      when: target_port_check is failed
+      block:
+        - name: Gather facts for bootstrap
+          ansible.builtin.setup:
+
+        - name: Create deploy user
+          ansible.builtin.user:
+            name: "{{ deploy_user }}"
+            groups: sudo
+            append: true
+            shell: /bin/bash
+            create_home: true
+
+        - name: Ensure .ssh directory for deploy user
+          ansible.builtin.file:
+            path: "/home/{{ deploy_user }}/.ssh"
+            state: directory
+            owner: "{{ deploy_user }}"
+            group: "{{ deploy_user }}"
+            mode: "0700"
+
+        - name: Copy root authorized_keys to deploy user
+          ansible.builtin.copy:
+            src: /root/.ssh/authorized_keys
+            dest: "/home/{{ deploy_user }}/.ssh/authorized_keys"
+            remote_src: true
+            owner: "{{ deploy_user }}"
+            group: "{{ deploy_user }}"
+            mode: "0600"
+            force: false
+
+        - name: Grant deploy user passwordless sudo
+          ansible.builtin.copy:
+            content: "{{ deploy_user }} ALL=(ALL) NOPASSWD: ALL\n"
+            dest: "/etc/sudoers.d/{{ deploy_user }}"
+            owner: root
+            group: root
+            mode: "0440"
+            validate: "visudo -cf %s"
+
+        - name: Install UFW
+          ansible.builtin.apt:
+            name: ufw
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Allow SSH on target port before switching
+          community.general.ufw:
+            rule: allow
+            to_port: "{{ ssh_port }}"
+            proto: tcp
+
+        - name: Deploy SSH hardening config
+          ansible.builtin.template:
+            src: roles/base/templates/99-hardening.conf.j2
+            dest: /etc/ssh/sshd_config.d/99-hardening.conf
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: Reload SSH to activate new port
+          ansible.builtin.systemd:
+            name: ssh
+            state: reloaded
+
+        - name: Wait for SSH on new port
+          ansible.builtin.wait_for:
+            host: "{{ ansible_host }}"
+            port: "{{ ssh_port }}"
+            delay: 2
+            timeout: 30
+          delegate_to: localhost
+          become: false
+
+# ── Main Deployment ──────────────────────────────────────────────────────
 - name: Deploy OpenClaw (hardened single-server)
   hosts: openclaw
   become: true
