@@ -18,11 +18,10 @@
     group: "{{ deploy_user }}"
     mode: "0700"
 
-- name: Copy root authorized_keys to deploy user (if not already present)
+- name: Push local SSH key to deploy user (if not already present)
   ansible.builtin.copy:
-    src: /root/.ssh/authorized_keys
+    content: "{{ lookup('file', local_ssh_key_path + '.pub') }}\n"
     dest: "/home/{{ deploy_user }}/.ssh/authorized_keys"
-    remote_src: true
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0600"

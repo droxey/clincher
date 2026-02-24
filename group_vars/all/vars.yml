@@ -6,6 +6,9 @@ admin_ip: "YOUR_STATIC_IP"
 openclaw_base_dir: /opt/openclaw
 domain: "openclaw.yourdomain.com"
 
+# SSH key for Ansible → server auth (auto-generated on first run if missing)
+local_ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
+
 # ── Image Versions (pinned) ───────────────────────────────────────────
 openclaw_version: "2026.2.23"
 docker_proxy_version: "0.6.0"
