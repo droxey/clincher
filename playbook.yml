@@ -95,13 +95,16 @@
       changed_when: false
       failed_when: false
       register: sshpass_check
+      when: ansible_password is defined or ansible_ssh_pass is defined
 
     - name: Fail if sshpass is missing
       ansible.builtin.fail:
         msg: >
           sshpass is required for password-based SSH bootstrap (--ask-pass).
           Install it: apt install sshpass — then re-run.
-      when: sshpass_check.rc != 0
+      when:
+        - ansible_password is defined or ansible_ssh_pass is defined
+        - sshpass_check.rc != 0
 
     - name: Gather facts
       ansible.builtin.setup:
