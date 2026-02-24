@@ -6,7 +6,7 @@ This repository is the **OpenClaw Hardened Single-Server Deployment** guide — 
 
 **This is a documentation-only repository.** There is no application source code, no build system, and no automated tests. All content lives in Markdown files and a Claude Code settings file.
 
-- **Target**: 1 Ubuntu 24.04 KVM VPS (4 vCPU, 8 GB RAM, 4 GB swap, 150 GB SSD)
+- **Target**: 1 Ubuntu 24.04 KVM VPS (16 vCPU, 64 GB RAM, 8 GB swap, 4 TB NVMe)
 - **OpenClaw Version**: `openclaw/openclaw:2026.2.23` (pinned)
 - **Threat Model**: Prompt injection → arbitrary tool execution → host/container escape
 
