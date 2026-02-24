@@ -2,9 +2,13 @@
 # OpenClaw Hardened Single-Server Deployment
 #
 # Usage:
-#   Full deploy:  ansible-playbook playbook.yml --ask-vault-pass
+#   First run:    ansible-playbook playbook.yml --ask-pass --ask-vault-pass
+#   After keys:   ansible-playbook playbook.yml --ask-vault-pass
 #   Specific role: ansible-playbook playbook.yml --ask-vault-pass --tags harden
 #   Dry run:      ansible-playbook playbook.yml --ask-vault-pass --check --diff
+#
+# First run requires --ask-pass (-k) so Ansible can SSH to root with a password.
+# After bootstrap pushes your SSH key, subsequent runs use key-based auth only.
 #
 # Tags: base, config, deploy, harden, integrate, proxy, verify, maintenance, monitoring
 
@@ -23,9 +27,19 @@
 
   tasks:
     # ── Phase 1: Test if the deploy user can already authenticate ────────
+    - name: Check if local SSH key exists
+      ansible.builtin.stat:
+        path: "{{ local_ssh_key_path }}"
+      delegate_to: localhost
+      become: false
+      register: local_key_stat
+
     - name: Test deploy user SSH access
       ansible.builtin.command: >
-        ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new
+        ssh -o BatchMode=yes -o ConnectTimeout=5
+        -o StrictHostKeyChecking=accept-new
+        -o IdentitiesOnly=yes
+        {{ '-i ' + local_ssh_key_path if local_key_stat.stat.exists else '' }}
         -p {{ ssh_port }} {{ deploy_user }}@{{ ansible_host }} echo ok
       delegate_to: localhost
       become: false
@@ -76,6 +90,18 @@
     - name: Gather facts
       ansible.builtin.setup:
 
+    - name: Ensure local SSH key exists
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ed25519 -f {{ local_ssh_key_path }} -N "" -C "deploy@clincher"
+      args:
+        creates: "{{ local_ssh_key_path }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Read local SSH public key
+      ansible.builtin.set_fact:
+        local_ssh_pubkey: "{{ lookup('file', local_ssh_key_path + '.pub') }}"
+
     - name: Create deploy user
       ansible.builtin.user:
         name: "{{ deploy_user }}"
@@ -92,15 +118,31 @@
         group: "{{ deploy_user }}"
         mode: "0700"
 
-    - name: Copy root authorized_keys to deploy user
+    - name: Push local SSH key to deploy user
       ansible.builtin.copy:
-        src: /root/.ssh/authorized_keys
+        content: "{{ local_ssh_pubkey }}\n"
         dest: "/home/{{ deploy_user }}/.ssh/authorized_keys"
-        remote_src: true
         owner: "{{ deploy_user }}"
         group: "{{ deploy_user }}"
         mode: "0600"
         force: false
+
+    - name: Ensure root .ssh directory
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Push local SSH key to root
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ local_ssh_pubkey }}"
+        create: true
+        owner: root
+        group: root
+        mode: "0600"
 
     - name: Grant deploy user passwordless sudo
       ansible.builtin.copy:
@@ -111,44 +153,24 @@
         mode: "0440"
         validate: "visudo -cf %s"
 
-    # ── Phase 4: Ensure SSH is hardened on the configured port ──────────
-    - name: Install UFW
-      ansible.builtin.apt:
-        name: ufw
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
-
-    - name: Allow SSH on configured port
-      community.general.ufw:
-        rule: allow
-        to_port: "{{ ssh_port }}"
-        proto: tcp
-
-    - name: Deploy SSH hardening config
-      ansible.builtin.template:
-        src: roles/base/templates/99-hardening.conf.j2
-        dest: /etc/ssh/sshd_config.d/99-hardening.conf
-        owner: root
-        group: root
-        mode: "0644"
-      register: ssh_config_changed
-
-    - name: Reload SSH if config changed
-      ansible.builtin.systemd:
-        name: ssh
-        state: reloaded
-      when: ssh_config_changed.changed
-
-    - name: Wait for SSH on configured port
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: "{{ ssh_port }}"
-        delay: 2
-        timeout: 30
+    - name: Verify deploy user can connect with SSH key
+      ansible.builtin.command: >
+        ssh -o BatchMode=yes -o ConnectTimeout=5
+        -o StrictHostKeyChecking=accept-new
+        -i {{ local_ssh_key_path }}
+        -p {{ ansible_port }} {{ deploy_user }}@{{ ansible_host }} echo ok
       delegate_to: localhost
       become: false
-      when: ssh_config_changed.changed
+      changed_when: false
+      register: deploy_key_check
+
+    - name: Warn if deploy user key auth failed
+      ansible.builtin.debug:
+        msg: >
+          WARNING: Deploy user key-based auth failed. SSH hardening
+          (which disables password auth) will be deferred to the base role.
+          Re-run the playbook after investigating.
+      when: deploy_key_check.rc != 0
 
 # ── Main Deployment ──────────────────────────────────────────────────────
 - name: Deploy OpenClaw (hardened single-server)
