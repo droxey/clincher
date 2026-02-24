@@ -11,12 +11,16 @@ services:
       - caddy-config:/config
     networks:
       - proxy-net
+      - ingress-net
     restart: unless-stopped
 
 networks:
   proxy-net:
     external: true
     name: openclaw_proxy-net
+  ingress-net:
+    external: true
+    name: openclaw_ingress-net
 
 volumes:
   caddy-data:

@@ -45,11 +45,31 @@
 - name: Configure Telegram channel
   when: telegram_enabled | bool
   block:
-    - name: Set Telegram bot token
-      ansible.builtin.command: >
-        docker exec openclaw openclaw config set channels.telegram.token
-        "{{ telegram_bot_token }}"
+    - name: Write Telegram bot token to host tempfile
+      ansible.builtin.copy:
+        content: "{{ telegram_bot_token }}"
+        dest: "{{ openclaw_base_dir }}/monitoring/.telegram-token"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Copy Telegram token into container
+      ansible.builtin.command: docker cp "{{ openclaw_base_dir }}/monitoring/.telegram-token" openclaw:/tmp/.tg-token
       changed_when: false
+      no_log: true
+
+    - name: Install Telegram token via file
+      ansible.builtin.command: >
+        docker exec openclaw sh -c
+        'openclaw config set channels.telegram.token "$(cat /tmp/.tg-token)" && rm -f /tmp/.tg-token'
+      changed_when: false
+      no_log: true
+
+    - name: Remove Telegram token tempfile from host
+      ansible.builtin.file:
+        path: "{{ openclaw_base_dir }}/monitoring/.telegram-token"
+        state: absent
       no_log: true
 
     - name: Configure Telegram streaming (fixed in 2026.2.19+)

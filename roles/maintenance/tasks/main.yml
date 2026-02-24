@@ -20,6 +20,11 @@
     group: root
     mode: "0700"
 
+- name: Pull Alpine image for backup jobs
+  community.docker.docker_image:
+    name: "alpine:3.21"
+    source: pull
+
 - name: Deploy token rotation script
   ansible.builtin.template:
     src: rotate-token.sh.j2

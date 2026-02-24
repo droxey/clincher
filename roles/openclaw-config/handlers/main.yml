@@ -8,6 +8,7 @@
   ansible.builtin.command: docker compose restart openclaw-egress
   args:
     chdir: "{{ openclaw_base_dir }}"
+  failed_when: false
 
 - name: restart litellm
   ansible.builtin.command: docker compose restart litellm

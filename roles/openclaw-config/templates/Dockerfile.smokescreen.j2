@@ -8,13 +8,14 @@ RUN apk add --no-cache git
 
 WORKDIR /src
 RUN git clone https://github.com/stripe/smokescreen.git . && \
-    git checkout {{ smokescreen_commit }} && \
-    CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/stripe/smokescreen/pkg/smokescreen.VersionID={{ smokescreen_commit }}" \
+    git checkout {{ smokescreen_commit }}
+COPY main.go .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/stripe/smokescreen/pkg/smokescreen.VersionID={{ smokescreen_commit }}" \
     -o /smokescreen .
 
 FROM alpine:{{ smokescreen_alpine_version }}
 
-RUN apk add --no-cache ca-certificates curl && \
+RUN apk add --no-cache ca-certificates netcat-openbsd && \
     adduser -D -H smokescreen
 
 COPY --from=builder /smokescreen /usr/local/bin/smokescreen

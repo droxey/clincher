@@ -7,9 +7,13 @@ services:
       TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
     networks:
       - proxy-net
+      - ingress-net
     restart: unless-stopped
 
 networks:
   proxy-net:
     external: true
     name: openclaw_proxy-net
+  ingress-net:
+    external: true
+    name: openclaw_ingress-net
