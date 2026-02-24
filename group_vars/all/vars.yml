@@ -14,7 +14,7 @@ openclaw_version: "2026.2.23"
 docker_proxy_version: "v0.4.2"
 # Smokescreen is built from source (no pre-built image).
 # Pin to a specific commit for reproducible builds.
-smokescreen_commit: "5dce0f3"
+smokescreen_commit: "v0.0.4"
 smokescreen_go_version: "1.22"
 smokescreen_alpine_version: "3.20"
 litellm_version: "main-v1.81.3-stable"
