@@ -1,0 +1,24 @@
+# Multi-stage build for Stripe Smokescreen egress proxy.
+# Produces a minimal Alpine image (~25 MB) with just the Go binary + CA certs.
+# Managed by Ansible — manual edits will be overwritten on next deploy.
+
+FROM golang:{{ smokescreen_go_version }}-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+RUN git clone https://github.com/stripe/smokescreen.git . && \
+    git checkout {{ smokescreen_commit }} && \
+    CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/stripe/smokescreen/pkg/smokescreen.VersionID={{ smokescreen_commit }}" \
+    -o /smokescreen .
+
+FROM alpine:{{ smokescreen_alpine_version }}
+
+RUN apk add --no-cache ca-certificates curl && \
+    adduser -D -H smokescreen
+
+COPY --from=builder /smokescreen /usr/local/bin/smokescreen
+
+USER smokescreen
+
+ENTRYPOINT ["smokescreen"]

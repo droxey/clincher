@@ -90,11 +90,11 @@
 
 - name: Show memory index status
   ansible.builtin.debug:
-    msg: "Memory index: {{ 'OK' if memory_verify.rc == 0 else 'FAILED — check Voyage API key and Squid whitelist' }}"
+    msg: "Memory index: {{ 'OK' if memory_verify.rc == 0 else 'FAILED — check Voyage API key and Smokescreen egress whitelist' }}"
 
 - name: Fail if memory index verification failed
   ansible.builtin.fail:
-    msg: "Memory index verification failed. Check Voyage API key, Squid egress whitelist (.voyageai.com), and container logs."
+    msg: "Memory index verification failed. Check Voyage API key, Smokescreen egress whitelist (*.voyageai.com), and container logs."
   when: memory_verify.rc != 0
 
 # ── Restart to apply all integration config ───────────────────────────

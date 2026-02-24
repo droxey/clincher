@@ -53,8 +53,8 @@ services:
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
-      HTTP_PROXY: http://openclaw-egress:3128
-      HTTPS_PROXY: http://openclaw-egress:3128
+      HTTP_PROXY: http://openclaw-egress:4750
+      HTTPS_PROXY: http://openclaw-egress:4750
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
       NODE_OPTIONS: "--dns-result-order=ipv4first"
@@ -99,8 +99,8 @@ services:
       VOYAGE_API_KEY: "${VOYAGE_API_KEY}"
       REDIS_HOST: "openclaw-redis"
       REDIS_PORT: "6379"
-      HTTP_PROXY: http://openclaw-egress:3128
-      HTTPS_PROXY: http://openclaw-egress:3128
+      HTTP_PROXY: http://openclaw-egress:4750
+      HTTPS_PROXY: http://openclaw-egress:4750
       NO_PROXY: openclaw-redis,localhost,127.0.0.1
     networks:
       - openclaw-net
@@ -125,23 +125,30 @@ services:
     restart: unless-stopped
 
   openclaw-egress:
-    image: ubuntu/squid:{{ squid_version }}
+    build:
+      context: ./build/smokescreen
+      dockerfile: Dockerfile
     container_name: openclaw-egress
+    command:
+      - "--egress-acl-file=/etc/smokescreen/acl.yaml"
+      - "--listen-ip=0.0.0.0"
+      - "--expose-prometheus-metrics"
+      - "--prometheus-listen-ip=0.0.0.0"
+      - "--deny-range=10.0.0.0/8"
+      - "--deny-range=172.16.0.0/12"
+      - "--deny-range=192.168.0.0/16"
     volumes:
-      - ./config/squid.conf:/etc/squid/squid.conf:ro
+      - ./config/smokescreen-acl.yaml:/etc/smokescreen/acl.yaml:ro
     networks:
       - openclaw-net
       - egress-net
     read_only: true
     tmpfs:
-      - /var/spool/squid:size=64M
-      - /var/log/squid:size=32M
-      - /run:size=8M
       - /tmp:size=16M
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "squid -k check 2>/dev/null || exit 1"]
+      test: ["CMD", "curl", "-sf", "http://localhost:4750/healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -149,8 +156,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "{{ squid_cpus }}"
-          memory: {{ squid_memory }}
+          cpus: "{{ smokescreen_cpus }}"
+          memory: {{ smokescreen_memory }}
     restart: unless-stopped
 
   redis:

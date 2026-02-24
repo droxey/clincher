@@ -1,5 +1,5 @@
 ---
-# Step 3: Create configuration files (squid, litellm, docker-compose)
+# Step 3: Create configuration files (smokescreen, litellm, docker-compose)
 
 - name: Create OpenClaw directory tree
   ansible.builtin.file:
@@ -11,14 +11,24 @@
   loop:
     - "{{ openclaw_base_dir }}"
     - "{{ openclaw_base_dir }}/config"
+    - "{{ openclaw_base_dir }}/build/smokescreen"
     - "{{ openclaw_base_dir }}/monitoring"
     - "{{ openclaw_base_dir }}/monitoring/logs"
     - "{{ openclaw_base_dir }}/monitoring/backups"
 
-- name: Deploy Squid egress config
+- name: Deploy Smokescreen Dockerfile
   ansible.builtin.template:
-    src: squid.conf.j2
-    dest: "{{ openclaw_base_dir }}/config/squid.conf"
+    src: Dockerfile.smokescreen.j2
+    dest: "{{ openclaw_base_dir }}/build/smokescreen/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: rebuild egress
+
+- name: Deploy Smokescreen egress ACL
+  ansible.builtin.template:
+    src: smokescreen-acl.yaml.j2
+    dest: "{{ openclaw_base_dir }}/config/smokescreen-acl.yaml"
     owner: root
     group: root
     mode: "0644"

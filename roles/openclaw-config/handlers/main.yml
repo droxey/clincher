@@ -1,4 +1,9 @@
 ---
+- name: rebuild egress
+  ansible.builtin.command: docker compose build openclaw-egress
+  args:
+    chdir: "{{ openclaw_base_dir }}"
+
 - name: restart egress
   ansible.builtin.command: docker compose restart openclaw-egress
   args:

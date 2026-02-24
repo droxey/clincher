@@ -1,0 +1,26 @@
+---
+# Smokescreen egress ACL — whitelist LLM provider domains only.
+# Managed by Ansible. Manual edits will be overwritten on next deploy.
+#
+# Policy: "enforce" denies all traffic except to listed domains.
+# Smokescreen resolves each requested domain and verifies the resolved IP
+# is publicly routable (blocks RFC 1918 / link-local / loopback by default),
+# preventing SSRF attacks even if a whitelisted domain resolves to an
+# internal address.
+
+version: v1
+
+services: []
+
+default:
+  project: openclaw
+  action: enforce
+  allowed_domains:
+{% for domain in egress_allowed_domains %}
+    - "{{ domain }}"
+{% endfor %}
+{% if egress_extra_domains is defined %}
+{% for domain in egress_extra_domains %}
+    - "{{ domain }}"
+{% endfor %}
+{% endif %}
