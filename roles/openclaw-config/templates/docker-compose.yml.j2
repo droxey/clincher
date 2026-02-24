@@ -1,6 +1,6 @@
 services:
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:{{ docker_proxy_version }}
+    image: ghcr.io/tecnativa/docker-socket-proxy:{{ docker_proxy_version }}
     container_name: openclaw-docker-proxy
     environment:
       CONTAINERS: "1"
@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
 
   openclaw:
-    image: openclaw/openclaw:{{ openclaw_version }}
+    image: ghcr.io/openclaw/openclaw:{{ openclaw_version }}
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
