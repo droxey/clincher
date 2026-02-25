@@ -8,6 +8,7 @@ domain: "openclaw.yourdomain.com"
 
 # SSH key for Ansible → server auth (auto-generated on first run if missing)
 local_ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
+ansible_ssh_private_key_file: "{{ local_ssh_key_path }}"
 
 # ── Image Versions (pinned) ───────────────────────────────────────────
 openclaw_version: "2026.2.23"

@@ -135,12 +135,22 @@
   changed_when: false
 
 # ── SOUL.md ───────────────────────────────────────────────────────────
-- name: Deploy SOUL.md into container
-  ansible.builtin.command: >
-    docker exec openclaw sh -c 'cat > /root/.openclaw/SOUL.md << '"'"'SOUL_EOF'"'"'
-    {{ lookup("template", "SOUL.md.j2") }}
-    SOUL_EOF'
+- name: Render SOUL.md to host staging file
+  ansible.builtin.template:
+    src: SOUL.md.j2
+    dest: "{{ openclaw_base_dir }}/monitoring/.SOUL.md"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Copy SOUL.md into container
+  ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.SOUL.md openclaw:/root/.openclaw/SOUL.md
   changed_when: false
+
+- name: Remove SOUL.md staging file from host
+  ansible.builtin.file:
+    path: "{{ openclaw_base_dir }}/monitoring/.SOUL.md"
+    state: absent
 
 # ── File Permissions ──────────────────────────────────────────────────
 - name: Lock down OpenClaw data directory permissions
