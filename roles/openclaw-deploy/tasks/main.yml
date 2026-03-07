@@ -11,12 +11,16 @@
     - "ghcr.io/berriai/litellm:{{ litellm_version }}"
     - "redis/redis-stack-server:{{ redis_version }}"
 
+# BuildKit (default in Docker 23+) writes build output to stderr, not stdout.
+# Check both streams so changed_when doesn't always report "no change".
 - name: Build Smokescreen egress proxy image
   ansible.builtin.command: docker compose build openclaw-egress
   args:
     chdir: "{{ openclaw_base_dir }}"
   register: smokescreen_build
-  changed_when: "'Successfully built' in smokescreen_build.stdout or 'exporting to image' in smokescreen_build.stdout"
+  changed_when: >
+    'Successfully built' in (smokescreen_build.stdout + smokescreen_build.stderr) or
+    'exporting to image' in (smokescreen_build.stdout + smokescreen_build.stderr)
 
 - name: Start OpenClaw stack
   community.docker.docker_compose_v2:
@@ -24,12 +28,18 @@
     state: present
   register: compose_result
 
+# Use the same format string as the verify role: containers without a HEALTHCHECK
+# defined return empty string from .State.Health.Status — guard with {{if .State.Health}}
+# and fall back to "running" so those containers don't spin until timeout.
+# Retries: 36 × 10s = 6 min — enough for smokescreen's Go multi-stage build on first pull.
 - name: Wait for all containers to become healthy
-  ansible.builtin.command: docker inspect {{ item }} --format '{{ '{{' }}.State.Health.Status{{ '}}' }}'
+  ansible.builtin.command: >
+    docker inspect {{ item }}
+    --format '{{ '{{' }}if .State.Health{{ '}}' }}{{ '{{' }}.State.Health.Status{{ '}}' }}{{ '{{' }}else{{ '}}' }}running{{ '{{' }}end{{ '}}' }}'
   register: health_check
-  until: health_check.stdout == 'healthy'
-  retries: 20
-  delay: 5
+  until: health_check.stdout in ['healthy', 'running']
+  retries: 36
+  delay: 10
   changed_when: false
   loop:
     - openclaw-docker-proxy

@@ -14,32 +14,37 @@
     "{{ openclaw_default_model }}"
   changed_when: false
 
-- name: Write Voyage API key to host tempfile
-  ansible.builtin.copy:
-    content: "VOYAGE_API_KEY={{ voyage_api_key }}"
-    dest: "{{ openclaw_base_dir }}/monitoring/.voyage-env"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
+# block/always ensures the host tempfile is removed even if docker cp or
+# container exec fails — prevents key material from sitting on disk.
+- name: Install Voyage API key into container
+  block:
+    - name: Write Voyage API key to host tempfile
+      ansible.builtin.copy:
+        content: "VOYAGE_API_KEY={{ voyage_api_key }}"
+        dest: "{{ openclaw_base_dir }}/monitoring/.voyage-env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
 
-- name: Copy Voyage API key into container
-  ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.voyage-env openclaw:/tmp/.voyage-env
-  changed_when: false
-  no_log: true
+    - name: Copy Voyage API key into container
+      ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.voyage-env openclaw:/tmp/.voyage-env
+      changed_when: false
+      no_log: true
 
-- name: Install Voyage API key into container .env
-  ansible.builtin.command: >
-    docker exec openclaw sh -c
-    'cat /tmp/.voyage-env > /root/.openclaw/.env && chmod 600 /root/.openclaw/.env && rm -f /tmp/.voyage-env'
-  changed_when: false
-  no_log: true
+    - name: Install Voyage API key into container .env
+      ansible.builtin.command: >
+        docker exec openclaw sh -c
+        'cat /tmp/.voyage-env > /root/.openclaw/.env && chmod 600 /root/.openclaw/.env && rm -f /tmp/.voyage-env'
+      changed_when: false
+      no_log: true
 
-- name: Remove Voyage API key tempfile from host
-  ansible.builtin.file:
-    path: "{{ openclaw_base_dir }}/monitoring/.voyage-env"
-    state: absent
-  no_log: true
+  always:
+    - name: Remove Voyage API key tempfile from host
+      ansible.builtin.file:
+        path: "{{ openclaw_base_dir }}/monitoring/.voyage-env"
+        state: absent
+      no_log: true
 
 # ── Step 7: Channel Integration (Telegram) ───────────────────────────
 - name: Configure Telegram channel
@@ -119,9 +124,17 @@
   ansible.builtin.debug:
     msg: "Memory index: {{ 'OK' if memory_verify.rc == 0 else 'FAILED — check Voyage API key and Smokescreen egress whitelist' }}"
 
-- name: Fail if memory index verification failed
-  ansible.builtin.fail:
-    msg: "Memory index verification failed. Check Voyage API key, Smokescreen egress whitelist (*.voyageai.com), and container logs."
+# Warn instead of fail — a bad Voyage key on first run shouldn't abort
+# verify, maintenance, and monitoring roles. Memory degrades gracefully
+# without an index. Fix the key and re-run with --tags integrate to retry.
+- name: Warn if memory index verification failed
+  ansible.builtin.debug:
+    msg: >
+      WARNING: Memory index verification failed (rc={{ memory_verify.rc }}).
+      OpenClaw will run without semantic memory until this is fixed.
+      Check: Voyage API key in vault.yml, Smokescreen egress whitelist (*.voyageai.com),
+      and container logs (docker logs openclaw-egress).
+      Re-run with --tags integrate after fixing.
   when: memory_verify.rc != 0
 
 # ── Restart to apply all integration config ───────────────────────────
