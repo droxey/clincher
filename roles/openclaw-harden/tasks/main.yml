@@ -135,22 +135,26 @@
   changed_when: false
 
 # ── SOUL.md ───────────────────────────────────────────────────────────
-- name: Render SOUL.md to host staging file
-  ansible.builtin.template:
-    src: SOUL.md.j2
-    dest: "{{ openclaw_base_dir }}/monitoring/.SOUL.md"
-    owner: root
-    group: root
-    mode: "0644"
+# block/always guarantees staging file removal even if docker cp fails.
+- name: Deploy SOUL.md into container
+  block:
+    - name: Render SOUL.md to host staging file
+      ansible.builtin.template:
+        src: SOUL.md.j2
+        dest: "{{ openclaw_base_dir }}/monitoring/.SOUL.md"
+        owner: root
+        group: root
+        mode: "0644"
 
-- name: Copy SOUL.md into container
-  ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.SOUL.md openclaw:/root/.openclaw/SOUL.md
-  changed_when: false
+    - name: Copy SOUL.md into container
+      ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.SOUL.md openclaw:/root/.openclaw/SOUL.md
+      changed_when: false
 
-- name: Remove SOUL.md staging file from host
-  ansible.builtin.file:
-    path: "{{ openclaw_base_dir }}/monitoring/.SOUL.md"
-    state: absent
+  always:
+    - name: Remove SOUL.md staging file from host
+      ansible.builtin.file:
+        path: "{{ openclaw_base_dir }}/monitoring/.SOUL.md"
+        state: absent
 
 # ── File Permissions ──────────────────────────────────────────────────
 - name: Lock down OpenClaw data directory permissions

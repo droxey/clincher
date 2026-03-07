@@ -87,6 +87,15 @@
       ansible.builtin.set_fact:
         ansible_port: "{{ ssh_port if (configured_port_check is succeeded) else 22 }}"
 
+    # Propagate the resolved port so the main play connects on the right port.
+    # Without this, the main play uses ansible_port from inventory (ssh_port),
+    # but on a fresh server SSH is still on 22 until the base role moves it.
+    - name: Propagate resolved SSH port to main play
+      ansible.builtin.add_host:
+        name: openclaw
+        ansible_port: "{{ ansible_port }}"
+      changed_when: false
+
     # ── Phase 3: Provision deploy user via root ─────────────────────────
     - name: Check sshpass is installed (required for password-based bootstrap)
       ansible.builtin.command: which sshpass

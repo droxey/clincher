@@ -18,6 +18,17 @@
     group: "{{ deploy_user }}"
     mode: "0700"
 
+# Guard: generate the keypair if the file doesn't exist yet (e.g., --tags base
+# run without bootstrap, or non-standard key path). lookup('file') hard-fails
+# if the path is missing, so we ensure it exists before calling it.
+- name: Generate local SSH keypair if missing
+  ansible.builtin.command:
+    cmd: ssh-keygen -t ed25519 -f {{ local_ssh_key_path }} -N "" -C "deploy@clincher"
+  args:
+    creates: "{{ local_ssh_key_path }}"
+  delegate_to: localhost
+  become: false
+
 - name: Push local SSH key to deploy user (if not already present)
   ansible.builtin.copy:
     content: "{{ lookup('file', local_ssh_key_path + '.pub') }}\n"

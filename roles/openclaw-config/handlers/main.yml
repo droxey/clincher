@@ -4,13 +4,21 @@
   args:
     chdir: "{{ openclaw_base_dir }}"
 
-- name: restart egress
-  ansible.builtin.shell: |
-    if docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' | grep -q openclaw-egress; then
-      docker compose restart openclaw-egress
-    fi
+- name: probe egress
+  ansible.builtin.command: docker compose ps -q openclaw-egress
   args:
     chdir: "{{ openclaw_base_dir }}"
+  register: egress_probe
+  failed_when: false
+  changed_when: false
+  listen: restart egress
+
+- name: restart egress container
+  ansible.builtin.command: docker compose restart openclaw-egress
+  args:
+    chdir: "{{ openclaw_base_dir }}"
+  when: egress_probe.stdout | default('') | trim != ''
+  listen: restart egress
 
 - name: restart litellm
   ansible.builtin.command: docker compose restart litellm
