@@ -24,10 +24,18 @@
   ansible.builtin.command: docker compose restart litellm
   args:
     chdir: "{{ openclaw_base_dir }}"
-  failed_when: false
+  register: restart_litellm_result
+  failed_when: >-
+    restart_litellm_result.rc != 0 and
+    'no such service' not in (restart_litellm_result.stderr | lower) and
+    'no such container' not in (restart_litellm_result.stderr | lower)
 
 - name: restart openclaw
   ansible.builtin.command: docker compose restart openclaw
   args:
     chdir: "{{ openclaw_base_dir }}"
-  failed_when: false
+  register: restart_openclaw_result
+  failed_when: >-
+    restart_openclaw_result.rc != 0 and
+    'no such service' not in (restart_openclaw_result.stderr | lower) and
+    'no such container' not in (restart_openclaw_result.stderr | lower)
