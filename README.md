@@ -5,7 +5,15 @@
     <a href="https://github.com/droxey/clincher/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/droxey/clincher/ci.yml?label=CI&logo=github" alt="CI"></a>
     <a href="https://docs.ansible.com/"><img src="https://img.shields.io/badge/Ansible-2.17+-red?logo=ansible&logoColor=white" alt="Ansible"></a>
     <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/OpenClaw-2026.2-blue" alt="OpenClaw"></a>
+    <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Compose-blue?logo=docker&logoColor=white" alt="Docker Compose"></a>
+    <a href="https://releases.ubuntu.com/24.04/"><img src="https://img.shields.io/badge/Ubuntu-24.04-orange?logo=ubuntu&logoColor=white" alt="Ubuntu 24.04"></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/droxey/clincher" alt="License"></a>
+  </p>
+  <p align="center">
+    <a href="https://github.com/droxey/clincher/commits"><img src="https://img.shields.io/github/last-commit/droxey/clincher" alt="Last Commit"></a>
+    <a href="https://github.com/droxey/clincher/issues"><img src="https://img.shields.io/github/issues/droxey/clincher" alt="Open Issues"></a>
+    <a href="https://github.com/droxey/clincher/pulls"><img src="https://img.shields.io/github/issues-pr/droxey/clincher" alt="Open PRs"></a>
+    <a href="https://github.com/droxey/clincher/graphs/contributors"><img src="https://img.shields.io/github/contributors/droxey/clincher" alt="Contributors"></a>
     <a href="https://github.com/droxey/clincher/stargazers"><img src="https://img.shields.io/github/stars/droxey/clincher?style=social" alt="Stars"></a>
   </p>
   <p align="center">
