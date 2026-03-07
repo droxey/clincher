@@ -520,20 +520,23 @@ model_list:
     litellm_params:
       model: "claude-opus-4-6"
       api_key: "os.environ/ANTHROPIC_API_KEY"
+    model_info:
       max_budget: 100.0        # USD per month
-      rpm: 60                  # requests per minute
+    rpm: 60                    # requests per minute
   - model_name: "anthropic/claude-sonnet-4-5-20250929"
     litellm_params:
       model: "claude-sonnet-4-5-20250929"
       api_key: "os.environ/ANTHROPIC_API_KEY"
+    model_info:
       max_budget: 50.0
-      rpm: 120
+    rpm: 120
   - model_name: "anthropic/claude-3-5-haiku-latest"
     litellm_params:
       model: "claude-3-5-haiku-latest"
       api_key: "os.environ/ANTHROPIC_API_KEY"
+    model_info:
       max_budget: 20.0
-      rpm: 300
+    rpm: 300
 
   # ── Embedding Model (for semantic cache) ───────────────────────────
   # Voyage AI is already whitelisted in Smokescreen (Step 3) and provisioned
