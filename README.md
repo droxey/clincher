@@ -1,21 +1,72 @@
-# OpenClaw Hardened VPS Deployment (2026.2)
+<p align="center">
+  <h1 align="center">🦞 clincher</h1>
+  <p align="center"><strong>Hardened OpenClaw deployment on a single VPS — one command, production-ready.</strong></p>
+  <p align="center">
+    <a href="https://github.com/droxey/clincher/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/droxey/clincher/ci.yml?label=CI&logo=github" alt="CI"></a>
+    <a href="https://docs.ansible.com/"><img src="https://img.shields.io/badge/Ansible-2.17+-red?logo=ansible&logoColor=white" alt="Ansible"></a>
+    <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/OpenClaw-2026.2-blue" alt="OpenClaw"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/droxey/clincher" alt="License"></a>
+    <a href="https://github.com/droxey/clincher/stargazers"><img src="https://img.shields.io/github/stars/droxey/clincher?style=social" alt="Stars"></a>
+  </p>
+  <p align="center">
+    <a href="#the-problem">Problem</a> •
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#architecture">Architecture</a> •
+    <a href="#automated-deployment-ansible">Ansible</a> •
+    <a href="#security">Security</a> •
+    <a href="#step-12-troubleshooting">Troubleshooting</a>
+  </p>
+</p>
 
-**Least-privilege OpenClaw deployment on a single server using Docker Compose.**
-Socket proxy, egress whitelist, and sandbox hardening included.
+---
 
-### KVM VPS Specs
+## The Problem
 
-- 16 vCPU
-- 64 GB RAM
-- 8 GB swap
-- 4 TB NVMe
-- Ubuntu 24.04
+Deploying a hardened AI agent on a VPS means hours of manual config: firewall rules, egress proxies, socket isolation, sandbox hardening, credential rotation, monitoring, and backups — dozens of security decisions, any one of which can leave your agent with root-equivalent access to the internet.
 
-### Why Single-Server?
+**This repo does it in one command.**
 
-A single server with Docker Compose gives you socket proxy, egress whitelist, sandbox isolation, and all hardening steps without the operational overhead of multi-node setups. Three bridge networks enforce least-privilege communication — no overlay networking or cluster coordination needed.
+One Ansible playbook handles everything — idempotently and safely re-runnable.
 
-### Architecture
+---
+
+## Quick Start
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/droxey/clincher.git && cd clincher
+cp group_vars/all/vault.yml.example group_vars/all/vault.yml
+$EDITOR group_vars/all/vault.yml          # add API keys + Telegram token
+ansible-vault encrypt group_vars/all/vault.yml
+
+# 2. Point at your server
+$EDITOR inventory/hosts.yml              # set ansible_host to your VPS IP
+
+# 3. Deploy everything
+ansible-playbook playbook.yml -i inventory/hosts.yml --ask-vault-pass
+```
+
+**That's it.** Firewall, egress proxy, socket isolation, sandbox hardening, channel integration, reverse proxy, monitoring, and backups — all configured and running.
+
+> **Contributor quick start**: `make help` to see all available targets. `make check` runs the full CI suite locally.
+
+---
+
+## Security
+
+```bash
+# Verify your deployment passes the full security audit
+docker exec $(docker ps -q -f "name=openclaw") openclaw security audit --deep
+
+# Inspect sandbox isolation status
+docker exec $(docker ps -q -f "name=openclaw") openclaw sandbox explain
+```
+
+Defense-in-depth: socket proxy, egress whitelist (Smokescreen), `openclaw-net` internal bridge, `capDrop=["ALL"]` on sandboxes, 13 dangerous tools blocked, file-based secret passing, UFW + fail2ban, Cloudflare-only ingress.
+
+---
+
+## Architecture
 
 ```
                   ┌─────────────────────────────────────┐
@@ -2703,3 +2754,15 @@ A `.vscode/mcp.json` file is included in this repository. It registers the OpenC
 ---
 
 **Done.** Deploy with `docker compose up -d` (Step 4), apply hardening (Step 5), configure API keys and channels (Steps 6-7), set up your reverse proxy (Step 9), verify (Step 10), then configure backups (Step 11). When you hit capacity limits, follow the scaling phases in Step 14.
+
+---
+
+## Star History
+
+<a href="https://star-history.com/#droxey/clincher&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=droxey/clincher&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=droxey/clincher&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=droxey/clincher&type=Date" />
+  </picture>
+</a>
