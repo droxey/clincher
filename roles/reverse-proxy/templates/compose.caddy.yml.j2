@@ -10,8 +10,8 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks:
-      - proxy-net
       - ingress-net
+      - proxy-net
     restart: unless-stopped
 
 networks:
