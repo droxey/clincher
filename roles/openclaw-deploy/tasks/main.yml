@@ -10,6 +10,10 @@
     - "ghcr.io/tecnativa/docker-socket-proxy:{{ docker_proxy_version }}"
     - "ghcr.io/berriai/litellm:{{ litellm_version }}"
     - "redis/redis-stack-server:{{ redis_version }}"
+  register: image_pull
+  retries: 3
+  delay: 10
+  until: image_pull is not failed
 
 # BuildKit (default in Docker 23+) writes build output to stderr, not stdout.
 # Check both streams so changed_when doesn't always report "no change".

@@ -70,6 +70,10 @@
     mode: "0755"
     timeout: 30
   when: docker_check.rc != 0
+  retries: 3
+  delay: 5
+  register: docker_script_download
+  until: docker_script_download is not failed
 
 - name: Install Docker via official script
   ansible.builtin.command: /tmp/get-docker.sh
@@ -81,6 +85,13 @@
   ansible.builtin.file:
     path: /tmp/get-docker.sh
     state: absent
+  when: docker_check.rc != 0
+
+- name: Ensure Docker service is started and enabled
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
   when: docker_check.rc != 0
 
 - name: Add deploy user to docker group
@@ -209,6 +220,10 @@
         dest: /tmp/install-tailscale.sh
         mode: "0755"
         timeout: 30
+      retries: 3
+      delay: 5
+      register: tailscale_script_download
+      until: tailscale_script_download is not failed
 
     - name: Run Tailscale install script
       ansible.builtin.command: /tmp/install-tailscale.sh

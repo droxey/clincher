@@ -204,6 +204,7 @@
 - name: Deploy OpenClaw (hardened single-server)
   hosts: openclaw
   become: true
+  any_errors_fatal: true
 
   pre_tasks:
     - name: Validate required variables

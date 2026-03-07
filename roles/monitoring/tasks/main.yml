@@ -39,6 +39,10 @@
     - "prom/prometheus:{{ prometheus_version }}"
     - "grafana/grafana-oss:{{ grafana_version }}"
     - "oliver006/redis_exporter:{{ redis_exporter_version }}"
+  retries: 3
+  delay: 10
+  register: monitoring_pull
+  until: monitoring_pull is not failed
 
 - name: Build compose file arguments
   ansible.builtin.set_fact:

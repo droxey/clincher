@@ -16,6 +16,10 @@
   community.docker.docker_image:
     name: "alpine:3.21"
     source: pull
+  retries: 3
+  delay: 10
+  register: alpine_pull
+  until: alpine_pull is not failed
 
 # ── Maintenance Scripts ───────────────────────────────────────────────
 - name: Deploy backup script
