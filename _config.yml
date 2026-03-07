@@ -1,0 +1,11 @@
+exclude:
+  - ansible.cfg
+  - requirements.yml
+  - playbook.yml
+  - group_vars
+  - inventory
+  - roles
+  - .ansible-lint
+  - .yamllint
+  - .vscode
+  - CLAUDE.md

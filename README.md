@@ -888,6 +888,7 @@ docker exec -it openclaw sh
 
 Inside the container shell:
 
+{% raw %}
 ```bash
 # ── Gateway Network ──────────────────────────────────────────────────
 # Bind to all interfaces — reverse proxy connects via the bridge network.
@@ -1037,6 +1038,7 @@ openclaw sandbox explain
 
 exit
 ```
+{% endraw %}
 
 Restart to pick up config changes:
 
@@ -1316,6 +1318,7 @@ docker compose restart openclaw
 
 ### Step 10: Verification
 
+{% raw %}
 ```bash
 # ── Security Audit ───────────────────────────────────────────────────
 docker exec openclaw openclaw security audit --deep
@@ -1415,6 +1418,7 @@ docker exec openclaw openclaw config get agents.defaults.maxTokens
 docker exec openclaw openclaw config get agents.defaults.sandbox.docker.idleHours
 # Expected: 12
 ```
+{% endraw %}
 
 ### Step 11: Maintenance
 
@@ -1536,6 +1540,7 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 
 ### Step 12: Troubleshooting
 
+{% raw %}
 | Symptom | Diagnostic | Fix |
 |---------|-----------|-----|
 | Sandbox fails | `docker logs openclaw-docker-proxy` | Verify EXEC=1, check socket proxy is reachable on `openclaw-net` |
@@ -1553,6 +1558,7 @@ Local backups on the same box are not disaster recovery. Push encrypted backups 
 | Config error after update | `docker exec openclaw openclaw doctor --repair` | Restore from backup: `docker exec openclaw cp /root/.openclaw/config.json.bak /root/.openclaw/config.json` and restart. See Step 5 backup note |
 | Redis unreachable / LiteLLM cache errors | `docker exec openclaw-redis redis-cli ping`, `docker logs openclaw-litellm --tail 50 \| grep -i redis` | Verify redis container is healthy, check `REDIS_HOST` env var in LiteLLM, verify both are on `openclaw-net`. LiteLLM falls back to no-cache if Redis is unavailable — service continues, just without caching |
 | Low cache hit rate | `docker exec openclaw-redis redis-cli dbsize`, check Prometheus `litellm_cache_hit_metric_total` | Normal for first 24 hours. If persistently < 5%, lower `similarity_threshold` from 0.8 to 0.7 in `litellm-config.yaml` and restart LiteLLM |
+{% endraw %}
 
 ### Step 13: High Availability and Disaster Recovery
 
@@ -1575,6 +1581,7 @@ Steps 1 and 3 established these HA building blocks. This section explains **why*
 
 This script runs every 5 minutes via cron, checks all five service containers, and alerts on unhealthy state or restart loops. It catches problems that Docker's built-in restart policy handles silently.
 
+{% raw %}
 ```bash
 cat > /opt/openclaw/monitoring/watchdog.sh << 'SCRIPT_EOF'
 #!/bin/bash
@@ -1739,6 +1746,7 @@ fi
 SCRIPT_EOF
 chmod 700 /opt/openclaw/monitoring/watchdog.sh
 ```
+{% endraw %}
 
 Add the watchdog to root's crontab alongside the existing backup and rotation jobs:
 
@@ -2150,6 +2158,7 @@ chmod 700 /opt/openclaw/monitoring/*.sh
 
 Run this after every recovery — whether from backup, warm standby, or DR drill:
 
+{% raw %}
 ```bash
 #!/bin/bash
 set -euo pipefail
@@ -2201,6 +2210,7 @@ free -h | awk '/Mem:/ {printf "  Memory: %s/%s used\n", $3, $2}'
 
 echo "=== Verification Complete ==="
 ```
+{% endraw %}
 
 #### 13.9 Warm Standby (Reduces RTO to < 15 Minutes)
 
