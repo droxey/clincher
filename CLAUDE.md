@@ -16,7 +16,6 @@ This repository is the **OpenClaw Hardened Single-Server Deployment** guide — 
 clincher/
 ├── CLAUDE.md                    # This file — project context + style guide for AI assistants
 ├── README.md                    # Primary artifact: 14-step deployment guide + Ansible docs
-├── RESEARCH_CLAW.md             # Comprehensive TL;DR deep-dive on OpenClaw system
 ├── USECASES.md                  # Community use cases and example deployments
 ├── LINKS.md                     # Curated links to skills, use cases, community resources
 ├── .claude/
