@@ -19,10 +19,42 @@
     mode: "0600"
   no_log: true
 
-- name: Copy gateway token into container
-  ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.gateway-token openclaw:/tmp/.gw-token
-  changed_when: false
-  no_log: true
+# block/always guarantees the token file is removed from the container even
+# if any auth config command fails — matching the same pattern used for SOUL.md.
+- name: Apply gateway auth config with guaranteed token cleanup
+  block:
+    - name: Copy gateway token into container
+      ansible.builtin.command: >
+        docker cp {{ openclaw_base_dir }}/monitoring/.gateway-token openclaw:/tmp/.gw-token
+      changed_when: false
+      no_log: true
+
+    - name: Restrict token file permissions inside container
+      ansible.builtin.command: docker exec openclaw chmod 600 /tmp/.gw-token
+      changed_when: false
+      no_log: true
+
+    - name: Apply gateway auth mode
+      ansible.builtin.command: >
+        docker exec openclaw openclaw config set gateway.auth.mode "token"
+      changed_when: false
+
+    - name: Apply gateway auth token
+      ansible.builtin.command: >
+        docker exec openclaw sh -c 'openclaw config set gateway.auth.token "$(cat /tmp/.gw-token)"'
+      changed_when: false
+      no_log: true
+
+    - name: Apply gateway auth allowTailscale
+      ansible.builtin.command: >
+        docker exec openclaw openclaw config set gateway.auth.allowTailscale false
+      changed_when: false
+
+  always:
+    - name: Remove gateway token file from container
+      ansible.builtin.command: docker exec openclaw rm -f /tmp/.gw-token
+      changed_when: false
+      no_log: true
 
 # ── Apply all hardening config ────────────────────────────────────────
 - name: Apply gateway network config
@@ -31,16 +63,6 @@
     - { key: 'gateway.bind', value: '"0.0.0.0"' }
     - { key: 'gateway.trustedProxies', value: "'[\"127.0.0.1\", \"{{ proxy_net_subnet | default(\"172.16.0.0/12\") }}\"]'" }
   changed_when: false
-
-- name: Apply gateway auth config
-  ansible.builtin.command: "docker exec openclaw sh -c '{{ item }}'"
-  loop:
-    - 'openclaw config set gateway.auth.mode "token"'
-    - 'openclaw config set gateway.auth.token "$(cat /tmp/.gw-token)"'
-    - 'rm -f /tmp/.gw-token'
-    - 'openclaw config set gateway.auth.allowTailscale false'
-  changed_when: false
-  no_log: true
 
 - name: Apply control UI security
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
@@ -180,11 +202,13 @@
     var: security_audit.stdout_lines
 
 # ── Restart to apply config ───────────────────────────────────────────
+# Use docker_compose_v2 module for consistent change detection and FQCN compliance.
 - name: Restart OpenClaw to apply hardening
-  ansible.builtin.command: docker compose restart openclaw
-  args:
-    chdir: "{{ openclaw_base_dir }}"
-  changed_when: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ openclaw_base_dir }}"
+    services:
+      - openclaw
+    state: restarted
 
 - name: Wait for OpenClaw to become healthy after hardening restart
   ansible.builtin.command: >

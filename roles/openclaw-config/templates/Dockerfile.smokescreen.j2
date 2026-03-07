@@ -9,6 +9,11 @@ RUN apk add --no-cache git
 WORKDIR /src
 RUN git clone https://github.com/stripe/smokescreen.git . && \
     git checkout {{ smokescreen_commit }}
+# COPY main.go replaces the upstream main.go with a custom entrypoint that uses
+# a static "default" ACL role instead of TLS client-cert-based role extraction.
+# This file is intentionally copied AFTER git clone so it overwrites the upstream
+# entrypoint. If stripe/smokescreen changes its module structure, verify that
+# the custom main.go still builds correctly after changing smokescreen_commit.
 COPY main.go .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/stripe/smokescreen/pkg/smokescreen.VersionID={{ smokescreen_commit }}" \
     -o /smokescreen .

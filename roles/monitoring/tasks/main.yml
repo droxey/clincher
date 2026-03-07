@@ -2,10 +2,12 @@
 # Step 13.2.1: Optional Prometheus + Grafana monitoring stack
 # Only runs when monitoring_enabled: true
 
-- name: Generate Grafana admin password if not set
-  ansible.builtin.set_fact:
-    grafana_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null chars=ascii_letters,digits length=32') }}"
-  when: grafana_admin_password is not defined or grafana_admin_password | length == 0
+- name: Ensure grafana_admin_password is set in vault
+  ansible.builtin.fail:
+    msg: >
+      grafana_admin_password must be set in vault.yml (not empty) when monitoring_enabled is true.
+      Generate one with: openssl rand -base64 24
+  when: grafana_admin_password | default('') | length == 0
 
 - name: Append Grafana password to .env
   ansible.builtin.lineinfile:
@@ -44,19 +46,18 @@
   register: monitoring_pull
   until: monitoring_pull is not failed
 
-- name: Build compose file arguments
+- name: Build monitoring compose file list
   ansible.builtin.set_fact:
-    compose_files: >-
-      -f docker-compose.yml
-      -f compose.monitoring.yml
-      {{ '-f compose.caddy.yml' if reverse_proxy == 'caddy' else '' }}
-      {{ '-f compose.tunnel.yml' if reverse_proxy == 'tunnel' else '' }}
+    _monitoring_compose_files: >-
+      {{ ['docker-compose.yml', 'compose.monitoring.yml'] +
+         (['compose.caddy.yml'] if reverse_proxy == 'caddy' else []) +
+         (['compose.tunnel.yml'] if reverse_proxy == 'tunnel' else []) }}
 
 - name: Start stack with monitoring overlay
-  ansible.builtin.command: "docker compose {{ compose_files | trim }} up -d"
-  args:
-    chdir: "{{ openclaw_base_dir }}"
-  changed_when: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ openclaw_base_dir }}"
+    files: "{{ _monitoring_compose_files }}"
+    state: present
 
 - name: Note monitoring resource cost
   ansible.builtin.debug:

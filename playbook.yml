@@ -306,22 +306,38 @@
             fail_msg: "telegram_bot_token must be set in vault.yml when telegram_enabled is true"
           when: telegram_enabled | bool
 
-    - name: Generate secrets that were left empty
+    - name: Verify secrets are set in vault
       tags: [always]
       block:
-        - name: Generate LiteLLM master key
-          ansible.builtin.set_fact:
-            litellm_master_key: "{{ lookup('ansible.builtin.password', '/dev/null chars=hexdigits length=64') }}"
+        # These secrets must be pre-generated and stored in vault.yml before running.
+        # To generate each secret run: openssl rand -hex 32
+        # Then store the output in vault.yml and encrypt: ansible-vault encrypt vault.yml
+        #
+        # Do NOT leave these empty. The playbook used to auto-generate them via set_fact,
+        # but that caused silent secret rotation on every re-run, breaking auth tokens
+        # and making existing backups unreadable.
+        - name: Ensure litellm_master_key is set in vault
+          ansible.builtin.fail:
+            msg: >
+              litellm_master_key must be set in vault.yml (not empty).
+              Generate one with: openssl rand -hex 32
+              Then add to vault.yml and encrypt: ansible-vault encrypt vault.yml
           when: litellm_master_key | default('') | length == 0
 
-        - name: Generate gateway token
-          ansible.builtin.set_fact:
-            gateway_token: "{{ lookup('ansible.builtin.password', '/dev/null chars=hexdigits length=64') }}"
+        - name: Ensure gateway_token is set in vault
+          ansible.builtin.fail:
+            msg: >
+              gateway_token must be set in vault.yml (not empty).
+              Generate one with: openssl rand -hex 32
+              Then add to vault.yml and encrypt: ansible-vault encrypt vault.yml
           when: gateway_token | default('') | length == 0
 
-        - name: Generate backup encryption key
-          ansible.builtin.set_fact:
-            backup_encryption_key: "{{ lookup('ansible.builtin.password', '/dev/null chars=hexdigits length=64') }}"
+        - name: Ensure backup_encryption_key is set in vault
+          ansible.builtin.fail:
+            msg: >
+              backup_encryption_key must be set in vault.yml (not empty).
+              Generate one with: openssl rand -hex 32
+              Then add to vault.yml and encrypt: ansible-vault encrypt vault.yml
           when: backup_encryption_key | default('') | length == 0
 
   roles:

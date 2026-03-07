@@ -1,9 +1,13 @@
 ---
 - name: Rebuild egress
-  ansible.builtin.command: docker compose build openclaw-egress
+  ansible.builtin.command: docker compose build --no-cache openclaw-egress
   args:
     chdir: "{{ openclaw_base_dir }}"
-  changed_when: true
+  register: _egress_build
+  # Handlers only fire when notified, so changed_when: true is safe here.
+  # --no-cache ensures a stale BuildKit layer doesn't silently serve old code
+  # when smokescreen_commit changes between runs.
+  changed_when: _egress_build.rc == 0
 
 - name: Probe egress
   ansible.builtin.command: docker compose ps -q openclaw-egress

@@ -5,10 +5,11 @@
     state: reloaded
 
 - name: Restart docker
+  # enabled: true belongs in the installation task, not the restart handler.
+  # Handlers should have a single responsibility.
   ansible.builtin.systemd:
     name: docker
     state: restarted
-    enabled: true
 
 - name: Reload sysctl
   ansible.builtin.command: sysctl --system

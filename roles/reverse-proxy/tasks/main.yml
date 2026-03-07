@@ -36,14 +36,17 @@
       register: caddy_pull
       until: caddy_pull is not failed
 
+    - name: Build Caddy compose file list
+      ansible.builtin.set_fact:
+        _caddy_compose_files: >-
+          {{ ['docker-compose.yml', 'compose.caddy.yml'] +
+             (['compose.monitoring.yml'] if monitoring_compose_file.stat.exists else []) }}
+
     - name: Start stack with Caddy overlay
-      ansible.builtin.command: >
-        docker compose -f docker-compose.yml -f compose.caddy.yml
-        {{ '-f compose.monitoring.yml' if monitoring_compose_file.stat.exists else '' }}
-        up -d
-      args:
-        chdir: "{{ openclaw_base_dir }}"
-      changed_when: true
+      community.docker.docker_compose_v2:
+        project_src: "{{ openclaw_base_dir }}"
+        files: "{{ _caddy_compose_files }}"
+        state: present
 
 # ── Option B: Cloudflare Tunnel ───────────────────────────────────────
 - name: Deploy Cloudflare Tunnel
@@ -66,14 +69,17 @@
       register: cloudflared_pull
       until: cloudflared_pull is not failed
 
+    - name: Build Tunnel compose file list
+      ansible.builtin.set_fact:
+        _tunnel_compose_files: >-
+          {{ ['docker-compose.yml', 'compose.tunnel.yml'] +
+             (['compose.monitoring.yml'] if monitoring_compose_file.stat.exists else []) }}
+
     - name: Start stack with Tunnel overlay
-      ansible.builtin.command: >
-        docker compose -f docker-compose.yml -f compose.tunnel.yml
-        {{ '-f compose.monitoring.yml' if monitoring_compose_file.stat.exists else '' }}
-        up -d
-      args:
-        chdir: "{{ openclaw_base_dir }}"
-      changed_when: true
+      community.docker.docker_compose_v2:
+        project_src: "{{ openclaw_base_dir }}"
+        files: "{{ _tunnel_compose_files }}"
+        state: present
 
     - name: Remind operator to configure tunnel route in Cloudflare dashboard
       ansible.builtin.debug:
@@ -95,10 +101,11 @@
       changed_when: false
 
     - name: Restart OpenClaw for Tailscale config
-      ansible.builtin.command: docker compose restart openclaw
-      args:
-        chdir: "{{ openclaw_base_dir }}"
-      changed_when: true
+      community.docker.docker_compose_v2:
+        project_src: "{{ openclaw_base_dir }}"
+        services:
+          - openclaw
+        state: restarted
 
     - name: Show Tailscale serve status
       ansible.builtin.command: tailscale serve status

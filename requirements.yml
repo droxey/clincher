@@ -1,8 +1,12 @@
 ---
+# Pin exact versions — floating ">=" constraints resolve to different versions
+# across installs, breaking reproducibility. To update a version:
+#   ansible-galaxy collection install <namespace>.<name> --upgrade
+# then pin the installed version here.
 collections:
   - name: community.docker
-    version: ">=3.12.0"
+    version: "3.13.0"
   - name: community.general
-    version: ">=9.0.0"
+    version: "9.5.0"
   - name: ansible.posix
-    version: ">=1.6.0"
+    version: "1.6.2"

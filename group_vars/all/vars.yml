@@ -11,20 +11,31 @@ local_ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
 ansible_ssh_private_key_file: "{{ local_ssh_key_path }}"
 
 # ── Image Versions (pinned) ───────────────────────────────────────────
-openclaw_version: "2026.2.23"
+openclaw_version: "2026.3.2"
 docker_proxy_version: "v0.4.2"
 # Smokescreen is built from source (no pre-built image).
-# Pin to a specific commit for reproducible builds.
-smokescreen_commit: "v0.0.4"
-smokescreen_go_version: "1.22"
-smokescreen_alpine_version: "3.20"
+# Pin to the COMMIT SHA (not the tag) for reproducible builds — git tags can be force-pushed.
+# SHA below is the commit for the v0.0.4 tag. To verify:
+#   git ls-remote https://github.com/stripe/smokescreen refs/tags/v0.0.4
+smokescreen_commit: "1dca4519091993661e52ab18b370b2024078f75a"
+# Pin builder and runtime to patch-level tags for reproducible layer IDs.
+smokescreen_go_version: "1.22.12"
+smokescreen_alpine_version: "3.20.6"
 litellm_version: "main-v1.81.3-stable"
 redis_version: "7.4.0-v3"
-caddy_version: "2-alpine"
+# Pin Caddy to a specific patch release — "2-alpine" is a floating tag.
+caddy_version: "2.8.4-alpine"
 cloudflared_version: "2026.2.0"
 prometheus_version: "v3.2.1"
 grafana_version: "11.5.2"
 redis_exporter_version: "v1.67.0"
+
+# ── Host Package Versions (pinned) ────────────────────────────────────
+# Pin to the exact Ubuntu package epoch:version string. To find the current
+# version on the target host: apt-cache policy docker-ce
+docker_ce_version: "5:27.5.1-1~ubuntu.24.04~noble"
+# To find: apt-cache policy tailscale (after adding the APT repo)
+tailscale_version: "1.78.1"
 
 # ── Docker Daemon ─────────────────────────────────────────────────────
 docker_log_max_size: "10m"

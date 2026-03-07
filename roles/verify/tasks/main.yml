@@ -30,7 +30,9 @@
     label: "{{ item.item }}"
 
 - name: Verify LiteLLM health
-  ansible.builtin.command: docker exec openclaw wget -qO- http://openclaw-litellm:4000/health/liveliness
+  ansible.builtin.command: >
+    docker exec openclaw
+    curl -sf http://openclaw-litellm:4000/health/liveliness
   register: litellm_health
   changed_when: false
   failed_when: false

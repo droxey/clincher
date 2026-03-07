@@ -56,36 +56,53 @@
     mode: "0644"
   notify: Reload ssh
 
-# ── Docker Installation ───────────────────────────────────────────────
-- name: Check if Docker is installed
-  ansible.builtin.command: docker --version
-  register: docker_check
-  changed_when: false
-  failed_when: false
+# ── Docker Installation (via official APT repo — GPG-signed packages) ────
+- name: Install Docker APT prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
-- name: Download Docker install script
-  ansible.builtin.get_url:
-    url: https://get.docker.com
-    dest: /tmp/get-docker.sh
+- name: Create Docker APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
     mode: "0755"
-    timeout: 30
-  when: docker_check.rc != 0
+
+- name: Download Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
   retries: 3
   delay: 5
-  register: docker_script_download
-  until: docker_script_download is not failed
+  register: docker_gpg_download
+  until: docker_gpg_download is not failed
 
-- name: Install Docker via official script
-  ansible.builtin.command: /tmp/get-docker.sh
-  args:
-    creates: /usr/bin/docker
-  when: docker_check.rc != 0
+- name: Add Docker APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}
+      signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
 
-- name: Remove Docker install script
-  ansible.builtin.file:
-    path: /tmp/get-docker.sh
-    state: absent
-  when: docker_check.rc != 0
+- name: Install Docker CE (pinned version)
+  ansible.builtin.apt:
+    name:
+      - "docker-ce={{ docker_ce_version }}"
+      - "docker-ce-cli={{ docker_ce_version }}"
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
 
 - name: Ensure Docker service is started and enabled
   ansible.builtin.systemd:
@@ -103,6 +120,7 @@
   ansible.builtin.command: docker compose version
   register: compose_check
   changed_when: false
+  check_mode: false
 
 # ── Docker Daemon Tuning ──────────────────────────────────────────────
 - name: Create /etc/docker directory
@@ -175,6 +193,19 @@
   retries: 3
   delay: 5
   until: cf_ipv4 is not failed
+  # Tailscale deployments don't use Cloudflare ingress rules; allow graceful skip.
+  ignore_errors: "{{ reverse_proxy == 'tailscale' }}"
+
+- name: Fail if Cloudflare IP fetch failed for non-Tailscale deployment
+  ansible.builtin.fail:
+    msg: >
+      Failed to fetch Cloudflare IP ranges after 3 retries. UFW rules for ports
+      80/443 were NOT applied — the server will not be reachable via Cloudflare.
+      Check connectivity to www.cloudflare.com, then re-run with --tags base.
+      If using Tailscale instead of Cloudflare, set reverse_proxy: tailscale.
+  when:
+    - cf_ipv4 is failed
+    - reverse_proxy != 'tailscale'
 
 - name: Fetch Cloudflare IPv6 ranges
   ansible.builtin.uri:
@@ -186,6 +217,7 @@
   delay: 5
   until: cf_ipv6 is not failed
   when: not (disable_ipv6 | bool)
+  ignore_errors: "{{ reverse_proxy == 'tailscale' }}"
 
 - name: Allow Cloudflare IPv4 ingress on 80,443
   community.general.ufw:
@@ -209,30 +241,34 @@
   community.general.ufw:
     state: enabled
 
-# ── Tailscale (Optional) ─────────────────────────────────────────────
+# ── Tailscale (Optional, via official APT repo — GPG-signed packages) ───
 - name: Install Tailscale
   when: tailscale_enabled | bool
   block:
-    - name: Download Tailscale install script
+    - name: Download Tailscale GPG key
       ansible.builtin.get_url:
-        url: https://tailscale.com/install.sh
-        dest: /tmp/install-tailscale.sh
-        mode: "0755"
-        timeout: 30
+        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: "0644"
+        force: false
       retries: 3
       delay: 5
-      register: tailscale_script_download
-      until: tailscale_script_download is not failed
+      register: tailscale_gpg_download
+      until: tailscale_gpg_download is not failed
 
-    - name: Run Tailscale install script
-      ansible.builtin.command: /tmp/install-tailscale.sh
-      args:
-        creates: /usr/bin/tailscale
+    - name: Add Tailscale APT repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg]
+          https://pkgs.tailscale.com/stable/ubuntu {{ ansible_distribution_release }} main
+        state: present
+        filename: tailscale
 
-    - name: Remove Tailscale install script
-      ansible.builtin.file:
-        path: /tmp/install-tailscale.sh
-        state: absent
+    - name: Install Tailscale (pinned version)
+      ansible.builtin.apt:
+        name: "tailscale={{ tailscale_version }}"
+        state: present
+        update_cache: true
 
     - name: Allow SSH from Tailscale CGNAT range
       community.general.ufw:

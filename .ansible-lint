@@ -15,6 +15,7 @@ skip_list:
 exclude_paths:
   - .github/
   - molecule/
+  - group_vars/all/vault.yml
 
 # Treat warnings as errors in CI
 strict: true
