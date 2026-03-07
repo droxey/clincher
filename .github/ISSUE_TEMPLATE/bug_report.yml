@@ -1,0 +1,53 @@
+---
+name: Bug Report
+description: Report a deployment or configuration issue
+labels: [bug]
+body:
+  - type: dropdown
+    id: step
+    attributes:
+      label: Which deployment step?
+      options:
+        - "Automated Deployment (Ansible)"
+        - "Step 1: Prerequisites"
+        - "Step 2: Firewall"
+        - "Step 3: Configuration Files"
+        - "Step 4: Deploy"
+        - "Step 5: Gateway and Sandbox Hardening"
+        - "Step 6: API Keys and Model Configuration"
+        - "Step 7: Channel Integration"
+        - "Step 8: Memory and RAG"
+        - "Step 9: Reverse Proxy"
+        - "Step 10: Verification"
+        - "Step 11: Maintenance"
+        - "Step 12: Troubleshooting"
+        - "Step 13: High Availability and DR"
+        - "Step 14: Scaling"
+        - "GitHub Copilot Integration"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and Docker version
+      placeholder: "Ubuntu 24.04, Docker 27.x"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      render: shell

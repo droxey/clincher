@@ -1,0 +1,34 @@
+---
+name: Feature Request
+description: Suggest an improvement or new deployment step
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      placeholder: "Describe the pain point this feature would address."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      placeholder: "How should this be implemented? Include config snippets if relevant."
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Which area does this affect?
+      options:
+        - "Security / hardening"
+        - "Ansible automation"
+        - "Docker Compose / services"
+        - "Reverse proxy"
+        - "Monitoring / alerting"
+        - "Maintenance / backups"
+        - "Documentation"
+        - "Other"
+    validations:
+      required: true

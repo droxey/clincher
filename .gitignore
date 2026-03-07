@@ -2,3 +2,9 @@ group_vars/all/vault.yml
 *.retry
 .retry/
 root/
+.molecule/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
