@@ -4,7 +4,7 @@
   <p align="center">
     <a href="https://github.com/droxey/clincher/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/droxey/clincher/ci.yml?label=CI&logo=github" alt="CI"></a>
     <a href="https://docs.ansible.com/"><img src="https://img.shields.io/badge/Ansible-2.17+-red?logo=ansible&logoColor=white" alt="Ansible"></a>
-    <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/OpenClaw-2026.2-blue" alt="OpenClaw"></a>
+    <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/OpenClaw-2026.3.2-blue" alt="OpenClaw"></a>
     <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Compose-blue?logo=docker&logoColor=white" alt="Docker Compose"></a>
     <a href="https://releases.ubuntu.com/24.04/"><img src="https://img.shields.io/badge/Ubuntu-24.04-orange?logo=ubuntu&logoColor=white" alt="Ubuntu 24.04"></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/droxey/clincher" alt="License"></a>
@@ -301,7 +301,7 @@ Update the image version in `vars.yml` and re-run:
 
 ```bash
 # In vars.yml, change:
-#   openclaw_version: "2026.2.23"  →  openclaw_version: "2026.3.0"
+#   openclaw_version: "2026.3.2"  →  openclaw_version: "2026.4.0"
 
 ansible-playbook playbook.yml --ask-vault-pass --tags config,deploy,harden,verify
 ```
@@ -542,19 +542,53 @@ First, create the Dockerfile for building Smokescreen from source:
 mkdir -p /opt/openclaw/build/smokescreen
 
 cat > /opt/openclaw/build/smokescreen/Dockerfile << 'EOF'
-FROM golang:1.22-alpine AS builder
+FROM golang:1.22.12-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 RUN git clone https://github.com/stripe/smokescreen.git . && \
-    git checkout v0.0.4 && \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o /smokescreen .
+    git checkout 1dca4519091993661e52ab18b370b2024078f75a
+# Replace the upstream main.go with a custom entrypoint that returns a
+# static "default" ACL role instead of extracting it from TLS client certs.
+# Without this, Smokescreen rejects all HTTP_PROXY connections.
+COPY main.go .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /smokescreen .
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates curl && \
+FROM alpine:3.20.6
+RUN apk add --no-cache ca-certificates netcat-openbsd && \
     adduser -D -H smokescreen
 COPY --from=builder /smokescreen /usr/local/bin/smokescreen
 USER smokescreen
 ENTRYPOINT ["smokescreen"]
+EOF
+```
+
+Create the custom entrypoint (`main.go`) that assigns a static ACL role — required because this deployment uses plain HTTP proxy, not TLS client certificates:
+
+```bash
+cat > /opt/openclaw/build/smokescreen/main.go << 'EOF'
+package main
+
+import (
+	"net/http"
+
+	"github.com/stripe/smokescreen/cmd"
+	"github.com/stripe/smokescreen/pkg/smokescreen"
+)
+
+func main() {
+	conf, err := cmd.NewConfiguration(nil, nil)
+	if err != nil {
+		panic(err)
+	}
+	// Return the "default" role for all requests so the ACL policy applies
+	// without requiring TLS client certificates.
+	conf.RoleFromRequest = func(req *http.Request) (string, error) {
+		return "default", nil
+	}
+	if err := smokescreen.StartWithConfig(conf, nil); err != nil {
+		panic(err)
+	}
+}
 EOF
 ```
 
@@ -707,6 +741,8 @@ services:
     tmpfs:
       - /tmp:size=16M
       - /run:size=8M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -723,7 +759,7 @@ services:
     restart: unless-stopped
 
   openclaw:
-    image: ghcr.io/openclaw/openclaw:2026.2.23
+    image: ghcr.io/openclaw/openclaw:2026.3.2
     container_name: openclaw
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375
@@ -738,6 +774,8 @@ services:
     networks:
       - openclaw-net
       - proxy-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     # Graceful shutdown: 2026.2.12+ drains active sessions before exit
@@ -780,6 +818,8 @@ services:
       NO_PROXY: openclaw-redis,localhost,127.0.0.1
     networks:
       - openclaw-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -808,6 +848,7 @@ services:
     command:
       - "--egress-acl-file=/etc/smokescreen/acl.yaml"
       - "--listen-ip=0.0.0.0"
+      - "--stats-socket-dir=/tmp"
       - "--deny-range=10.0.0.0/8"
       - "--deny-range=172.16.0.0/12"
       - "--deny-range=192.168.0.0/16"
@@ -819,10 +860,13 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16M
+      - /run:size=8M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4750/healthcheck"]
+      test: ["CMD-SHELL", "nc -z -w 1 localhost 4750"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -844,6 +888,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=32M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     command: >
@@ -898,7 +944,7 @@ COMPOSE_EOF
 > **2026 supply chain best practice**: Verify container provenance before first run. Pull images, record their digests, and (if signatures are published) verify them with Sigstore:
 > ```bash
 > for img in \
->   ghcr.io/openclaw/openclaw:2026.2.23 \
+>   ghcr.io/openclaw/openclaw:2026.3.2 \
 >   ghcr.io/berriai/litellm:main-v1.81.3-stable \
 >   ghcr.io/tecnativa/docker-socket-proxy:v0.4.2 \
 >   redis/redis-stack-server:7.4.0-v3; do
@@ -908,7 +954,7 @@ COMPOSE_EOF
 >   # Optional: cosign verify "$img"
 > done
 > ```
-> Append the verified digests (e.g., `ghcr.io/openclaw/openclaw:2026.2.23@sha256:<digest>`) to your Compose file to lock deployments to the vetted artifacts, then proceed with the steps below.
+> Append the verified digests (e.g., `ghcr.io/openclaw/openclaw:2026.3.2@sha256:<digest>`) to your Compose file to lock deployments to the vetted artifacts, then proceed with the steps below.
 
 ```bash
 cd /opt/openclaw
@@ -1299,7 +1345,7 @@ exit
 > docker exec openclaw du -sh /root/.openclaw/memory/
 > ```
 >
-> If index size exceeds ~500 MB or `openclaw memory index --verify` begins reporting slow query times, run a full rebuild. There is no migration path to an external vector store (PostgreSQL + pgvector) as of 2026.2.23 — external vector storage is not natively supported.
+> If index size exceeds ~500 MB or `openclaw memory index --verify` begins reporting slow query times, run a full rebuild. There is no migration path to an external vector store (PostgreSQL + pgvector) as of 2026.3.2 — external vector storage is not natively supported.
 
 ### Step 9: Reverse Proxy Setup
 
@@ -2312,7 +2358,7 @@ A pre-staged standby is a pre-provisioned server that mirrors the production con
 
 ```bash
 # On the standby server
-docker pull ghcr.io/openclaw/openclaw:2026.2.23
+docker pull ghcr.io/openclaw/openclaw:2026.3.2
 docker pull ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
 # Build Smokescreen egress proxy image (built from source, not pulled)
 cd /opt/openclaw && docker compose build openclaw-egress
@@ -2626,7 +2672,7 @@ The scaling pattern is **bot partitioning**: create multiple Telegram bots (via 
 cat > /opt/openclaw/compose.secondary.yml << 'EOF'
 services:
   openclaw-secondary:
-    image: ghcr.io/openclaw/openclaw:2026.2.23
+    image: ghcr.io/openclaw/openclaw:2026.3.2
     container_name: openclaw-secondary
     environment:
       DOCKER_HOST: tcp://openclaw-docker-proxy:2375

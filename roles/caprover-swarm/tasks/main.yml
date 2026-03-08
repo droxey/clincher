@@ -97,7 +97,7 @@
           -v /captain:/captain
           caprover/caprover:{{ caprover_version }}
       when: caprover_service.stdout == ''
-      changed_when: true
+      changed_when: caprover_service.stdout == ''
 
     - name: Wait for CapRover to become healthy
       ansible.builtin.uri:
@@ -110,6 +110,7 @@
       until: caprover_health.status == 200
       retries: 30
       delay: 10
+      no_log: true
 
 # ── Change default password ──────────────────────────────────────────
 
@@ -213,7 +214,7 @@
           --token {{ hostvars[groups['caprover_leader'][0]].caprover_swarm_join_token }}
           {{ hostvars[groups['caprover_leader'][0]].ansible_host }}:2377
       when: worker_swarm_state.stdout != 'active'
-      changed_when: true
+      changed_when: worker_swarm_state.stdout != 'active'
 
 # ── Register workers in CapRover ─────────────────────────────────────
 

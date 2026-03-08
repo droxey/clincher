@@ -247,8 +247,9 @@
           ═══════════════════════════════════════════════════════════════
 
           Leader   : {{ hostvars[groups['caprover_leader'][0]].ansible_host }} (New York)
-          Worker 1 : {{ hostvars[groups['caprover_workers'][0]].ansible_host }} (Los Angeles)
-          Worker 2 : {{ hostvars[groups['caprover_workers'][1]].ansible_host }} (Chicago)
+          {% for worker in groups['caprover_workers'] %}
+          Worker {{ loop.index }} : {{ hostvars[worker].ansible_host }}
+          {% endfor %}
 
           Dashboard: https://captain.{{ caprover_root_domain }}
           Swarm nodes: {{ swarm_nodes.stdout_lines | length }}
