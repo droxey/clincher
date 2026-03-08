@@ -1,3 +1,4 @@
+---
 exclude:
   - ansible.cfg
   - caprover-playbook.yml
