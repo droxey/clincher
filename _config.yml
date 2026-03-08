@@ -1,0 +1,15 @@
+exclude:
+  - ansible.cfg
+  - caprover-playbook.yml
+  - playbook.yml
+  - requirements.txt
+  - requirements.yml
+  - Makefile
+  - inventory/
+  - group_vars/
+  - roles/
+  - molecule/
+  - .claude/
+  - .ansible-lint
+  - .yamllint
+  - .vscode/
