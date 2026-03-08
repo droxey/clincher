@@ -1,0 +1,68 @@
+---
+# Converge playbook for base role
+# Renders all templates to a temp directory without requiring root or Docker.
+- name: Test base role template rendering
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+
+  vars:
+    base_test_dir: /tmp/molecule-base
+
+    # SSH hardening
+    ssh_port: 9922
+    deploy_user: "deploy"
+
+    # Sysctl tuning
+    swappiness: 10
+    inotify_max_watches: 524288
+    inotify_max_instances: 512
+    somaxconn: 1024
+    disable_ipv6: false
+
+    # Docker daemon
+    docker_log_max_size: "10m"
+    docker_log_max_file: "3"
+    docker_dns:
+      - "1.1.1.1"
+      - "8.8.8.8"
+    docker_max_concurrent_downloads: 4
+    docker_max_concurrent_uploads: 2
+
+  tasks:
+    - name: Create test directory tree
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ base_test_dir }}"
+        - "{{ base_test_dir }}/sshd"
+        - "{{ base_test_dir }}/sysctl"
+        - "{{ base_test_dir }}/docker"
+        - "{{ base_test_dir }}/fail2ban"
+
+    - name: Deploy SSH hardening config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/99-hardening.conf.j2"
+        dest: "{{ base_test_dir }}/sshd/99-hardening.conf"
+        mode: "0644"
+
+    - name: Deploy sysctl tuning config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/99-openclaw.conf.j2"
+        dest: "{{ base_test_dir }}/sysctl/99-openclaw.conf"
+        mode: "0644"
+
+    - name: Deploy Docker daemon config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/daemon.json.j2"
+        dest: "{{ base_test_dir }}/docker/daemon.json"
+        mode: "0644"
+
+    - name: Deploy fail2ban jail config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/jail.local.j2"
+        dest: "{{ base_test_dir }}/fail2ban/jail.local"
+        mode: "0644"

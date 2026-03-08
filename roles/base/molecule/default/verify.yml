@@ -1,0 +1,116 @@
+---
+# Verify base role outputs
+- name: Verify base template rendering
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    base_test_dir: /tmp/molecule-base
+
+  tasks:
+    # --- File existence checks ---
+    - name: Check rendered files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: file_checks
+      loop:
+        - "{{ base_test_dir }}/sshd/99-hardening.conf"
+        - "{{ base_test_dir }}/sysctl/99-openclaw.conf"
+        - "{{ base_test_dir }}/docker/daemon.json"
+        - "{{ base_test_dir }}/fail2ban/jail.local"
+
+    - name: Assert files exist
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "File {{ item.item }} was not created"
+      loop: "{{ file_checks.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Assert file permissions are 0644
+      ansible.builtin.assert:
+        that: item.stat.mode == '0644'
+        fail_msg: "File {{ item.item }} should be mode 0644, got {{ item.stat.mode }}"
+      loop: "{{ file_checks.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- SSH hardening config ---
+    - name: Read SSH hardening config
+      ansible.builtin.slurp:
+        src: "{{ base_test_dir }}/sshd/99-hardening.conf"
+      register: ssh_content
+
+    - name: Verify SSH hardening config contains expected content
+      ansible.builtin.assert:
+        that:
+          - "'Port 9922' in (ssh_content.content | b64decode)"
+          - "'PermitRootLogin no' in (ssh_content.content | b64decode)"
+          - "'PasswordAuthentication no' in (ssh_content.content | b64decode)"
+          - "'PubkeyAuthentication yes' in (ssh_content.content | b64decode)"
+          - "'AllowUsers deploy' in (ssh_content.content | b64decode)"
+          - "'MaxAuthTries 3' in (ssh_content.content | b64decode)"
+          - "'X11Forwarding no' in (ssh_content.content | b64decode)"
+          - "'AllowTcpForwarding no' in (ssh_content.content | b64decode)"
+          - "'AllowAgentForwarding no' in (ssh_content.content | b64decode)"
+        fail_msg: "99-hardening.conf is missing expected SSH hardening directives"
+
+    # --- Sysctl tuning config ---
+    - name: Read sysctl tuning config
+      ansible.builtin.slurp:
+        src: "{{ base_test_dir }}/sysctl/99-openclaw.conf"
+      register: sysctl_content
+
+    - name: Verify sysctl config contains expected tuning values
+      ansible.builtin.assert:
+        that:
+          - "'vm.swappiness = 10' in (sysctl_content.content | b64decode)"
+          - "'fs.inotify.max_user_watches = 524288' in (sysctl_content.content | b64decode)"
+          - "'fs.inotify.max_user_instances = 512' in (sysctl_content.content | b64decode)"
+          - "'net.core.somaxconn = 1024' in (sysctl_content.content | b64decode)"
+        fail_msg: "99-openclaw.conf is missing expected sysctl tuning values"
+
+    - name: Verify IPv6 is NOT disabled (disable_ipv6=false)
+      ansible.builtin.assert:
+        that:
+          - "'disable_ipv6' not in (sysctl_content.content | b64decode)"
+        fail_msg: "99-openclaw.conf should not contain IPv6 disable directives when disable_ipv6=false"
+
+    # --- Docker daemon config ---
+    - name: Read Docker daemon config
+      ansible.builtin.slurp:
+        src: "{{ base_test_dir }}/docker/daemon.json"
+      register: daemon_content
+
+    - name: Verify Docker daemon config contains expected content
+      ansible.builtin.assert:
+        that:
+          - "'\"max-size\": \"10m\"' in (daemon_content.content | b64decode)"
+          - "'\"max-file\": \"3\"' in (daemon_content.content | b64decode)"
+          - "'\"no-new-privileges\": true' in (daemon_content.content | b64decode)"
+          - "'\"live-restore\": true' in (daemon_content.content | b64decode)"
+          - "'\"storage-driver\": \"overlay2\"' in (daemon_content.content | b64decode)"
+          - "'1.1.1.1' in (daemon_content.content | b64decode)"
+          - "'8.8.8.8' in (daemon_content.content | b64decode)"
+          - "'\"max-concurrent-downloads\": 4' in (daemon_content.content | b64decode)"
+          - "'\"max-concurrent-uploads\": 2' in (daemon_content.content | b64decode)"
+        fail_msg: "daemon.json is missing expected Docker daemon configuration"
+
+    # --- fail2ban jail config ---
+    - name: Read fail2ban jail config
+      ansible.builtin.slurp:
+        src: "{{ base_test_dir }}/fail2ban/jail.local"
+      register: jail_content
+
+    - name: Verify fail2ban jail config contains expected content
+      ansible.builtin.assert:
+        that:
+          - "'[sshd]' in (jail_content.content | b64decode)"
+          - "'enabled = true' in (jail_content.content | b64decode)"
+          - "'port = 9922' in (jail_content.content | b64decode)"
+          - "'maxretry = 3' in (jail_content.content | b64decode)"
+          - "'bantime = 3600' in (jail_content.content | b64decode)"
+          - "'findtime = 600' in (jail_content.content | b64decode)"
+        fail_msg: "jail.local is missing expected fail2ban configuration"
