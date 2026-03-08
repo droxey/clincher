@@ -1,0 +1,35 @@
+---
+# Verify openclaw-harden role outputs
+- name: Verify openclaw-harden template rendering
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    openclaw_base_dir: /tmp/molecule-openclaw-harden
+
+  tasks:
+    - name: Check SOUL.md exists
+      ansible.builtin.stat:
+        path: "{{ openclaw_base_dir }}/SOUL.md"
+      register: soul_check
+
+    - name: Assert SOUL.md exists
+      ansible.builtin.assert:
+        that: soul_check.stat.exists
+        fail_msg: "File {{ openclaw_base_dir }}/SOUL.md was not created"
+
+    - name: Read SOUL.md
+      ansible.builtin.slurp:
+        src: "{{ openclaw_base_dir }}/SOUL.md"
+      register: soul_content
+
+    - name: Verify SOUL.md contains key security phrases
+      ansible.builtin.assert:
+        that:
+          - "'prompt injection' in (soul_content.content | b64decode)"
+          - "'API keys' in (soul_content.content | b64decode)"
+          - "'least privilege' in (soul_content.content | b64decode)"
+          - "'hardened OpenClaw' in (soul_content.content | b64decode)"
+        fail_msg: "SOUL.md is missing expected security phrases"

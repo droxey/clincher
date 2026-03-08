@@ -1,0 +1,24 @@
+---
+# Converge playbook for openclaw-harden role
+# Renders SOUL.md template to a temporary directory without requiring Docker.
+- name: Test openclaw-harden role template rendering
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+
+  vars:
+    openclaw_base_dir: /tmp/molecule-openclaw-harden
+
+  tasks:
+    - name: Create OpenClaw directory tree
+      ansible.builtin.file:
+        path: "{{ openclaw_base_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Deploy SOUL.md agent guidelines
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/SOUL.md.j2"
+        dest: "{{ openclaw_base_dir }}/SOUL.md"
+        mode: "0644"
