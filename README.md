@@ -114,7 +114,7 @@ cd roles/monitoring && molecule test         # Prometheus config, monitoring com
 
 ### What Molecule Tests Cover
 
-Every Molecule scenario uses a **delegated driver with local connection** — no containers, no VMs, no SSH. Tests render templates with realistic variable values and verify:
+Every Molecule scenario uses a **delegated driver with local connection** — no containers, no VMs, no SSH. Tests render templates with realistic variable values (defined in each role's `molecule/default/converge.yml`) and verify:
 
 - **File creation** — all expected config files are generated
 - **Content correctness** — rendered output contains expected services, domains, keys, and settings
