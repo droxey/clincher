@@ -1,0 +1,15 @@
+Port {{ caprover_ssh_port }}
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+MaxAuthTries {{ caprover_ssh_max_auth_tries }}
+ClientAliveInterval {{ caprover_ssh_client_alive_interval }}
+ClientAliveCountMax {{ caprover_ssh_client_alive_count_max }}
+AllowAgentForwarding {{ caprover_ssh_allow_agent_forwarding | ternary('yes', 'no') }}
+AllowTcpForwarding {{ caprover_ssh_allow_tcp_forwarding | ternary('yes', 'no') }}
+X11Forwarding {{ caprover_ssh_x11_forwarding | ternary('yes', 'no') }}
+PermitEmptyPasswords no
+MaxSessions 3
+LoginGraceTime 30
+Banner /etc/issue.net
+Protocol 2

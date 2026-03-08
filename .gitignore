@@ -1,4 +1,5 @@
 group_vars/all/vault.yml
+group_vars/caprover/vault.yml
 *.retry
 .retry/
 root/

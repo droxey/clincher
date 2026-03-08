@@ -359,4 +359,6 @@
       tags: [maintenance]
     - role: monitoring
       tags: [monitoring]
-      when: monitoring_enabled | bool
+      when:
+        - monitoring_enabled | bool
+        - not (external_monitoring_enabled | default(false) | bool)

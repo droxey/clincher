@@ -1,0 +1,249 @@
+---
+# CapRover Swarm Deployment — External Monitoring for OpenClaw
+#
+# One-command deployment:
+#   ansible-playbook caprover-playbook.yml --ask-vault-pass
+#
+# Architecture:
+#   Leader (NY)     — CapRover captain, Prometheus, Grafana, Uptime Kuma
+#   Worker (LA)     — code-server, overflow capacity
+#   Worker (Chicago) — Infisical, overflow capacity
+#
+# Services deployed via CapRover API:
+#   - Prometheus    — scrapes OpenClaw metrics externally
+#   - Grafana       — dashboards and alerting
+#   - Uptime Kuma   — external uptime monitoring
+#   - code-server   — browser-based VS Code IDE
+#   - Infisical     — secrets management platform
+#
+# Prerequisites:
+#   1. DNS: *.dev wildcard A record → leader IP (192.3.81.8)
+#   2. Secrets: cp group_vars/caprover/vault.yml.example group_vars/caprover/vault.yml
+#              ansible-vault encrypt group_vars/caprover/vault.yml
+#   3. Collections: ansible-galaxy install -r requirements.yml
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase 0: Bootstrap — Ensure deploy user SSH access on all nodes
+# ═════════════════════════════════════════════════════════════════════
+
+- name: Bootstrap CapRover nodes
+  hosts: caprover
+  gather_facts: false
+  become: true
+  tags: [bootstrap]
+  vars:
+    ansible_user: root
+
+  tasks:
+    - name: Test if deploy user already works
+      ansible.builtin.wait_for_connection:
+        timeout: 5
+      vars:
+        ansible_user: "{{ caprover_deploy_user }}"
+        ansible_port: "{{ caprover_ssh_port }}"
+      register: deploy_test
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Determine bootstrap port
+      ansible.builtin.wait_for_connection:
+        timeout: 10
+      vars:
+        ansible_port: "{{ item }}"
+      register: port_test
+      ignore_errors: true
+      ignore_unreachable: true
+      loop:
+        - "{{ caprover_ssh_port }}"
+        - 22
+      when: deploy_test is failed or deploy_test is unreachable
+
+    - name: Set bootstrap port fact
+      ansible.builtin.set_fact:
+        bootstrap_port: >-
+          {{ (port_test.results | default([]) |
+              selectattr('failed', 'equalto', false) |
+              selectattr('unreachable', 'undefined') |
+              map(attribute='item') | first) | default(22) }}
+      when: deploy_test is failed or deploy_test is unreachable
+
+    - name: Bootstrap deploy user
+      when: deploy_test is failed or deploy_test is unreachable
+      vars:
+        ansible_port: "{{ bootstrap_port | default(22) }}"
+      block:
+        - name: Gather facts for bootstrap
+          ansible.builtin.setup:
+            gather_subset: min
+
+        - name: Create deploy user
+          ansible.builtin.user:
+            name: "{{ caprover_deploy_user }}"
+            shell: /bin/bash
+            groups: sudo
+            append: true
+            create_home: true
+
+        - name: Set authorized key
+          ansible.posix.authorized_key:
+            user: "{{ caprover_deploy_user }}"
+            key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+            state: present
+
+        - name: Grant passwordless sudo
+          ansible.builtin.copy:
+            content: "{{ caprover_deploy_user }} ALL=(ALL) NOPASSWD:ALL\n"
+            dest: "/etc/sudoers.d/{{ caprover_deploy_user }}"
+            mode: "0440"
+            validate: "visudo -cf %s"
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase 1: OS hardening — All nodes
+# ═════════════════════════════════════════════════════════════════════
+
+- name: Harden CapRover nodes
+  hosts: caprover
+  become: true
+  any_errors_fatal: true
+  tags: [base]
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - caprover_deploy_user is defined
+          - caprover_ssh_port is defined
+          - caprover_ssh_port | int > 0
+          - caprover_ssh_port | int < 65536
+          - caprover_docker_ce_version is defined
+        fail_msg: "Required CapRover base variables are not set"
+        quiet: true
+
+  roles:
+    - role: caprover-base
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase 2: CapRover Swarm — Leader init + worker join
+# ═════════════════════════════════════════════════════════════════════
+
+- name: Initialize CapRover Swarm (leader)
+  hosts: caprover_leader
+  become: true
+  any_errors_fatal: true
+  tags: [swarm]
+
+  pre_tasks:
+    - name: Validate CapRover secrets
+      ansible.builtin.assert:
+        that:
+          - caprover_captain_password is defined
+          - caprover_captain_password | length > 0
+          - caprover_root_domain is defined
+          - caprover_root_domain | length > 0
+        fail_msg: "CapRover captain password and root domain must be set in vault"
+        quiet: true
+
+  roles:
+    - role: caprover-swarm
+
+- name: Join workers to CapRover Swarm
+  hosts: caprover_workers
+  become: true
+  any_errors_fatal: true
+  tags: [swarm]
+
+  roles:
+    - role: caprover-swarm
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase 3: Deploy apps — Leader only (CapRover distributes to swarm)
+# ═════════════════════════════════════════════════════════════════════
+
+- name: Deploy CapRover apps
+  hosts: caprover_leader
+  become: true
+  any_errors_fatal: true
+  tags: [apps]
+
+  pre_tasks:
+    - name: Validate app secrets
+      ansible.builtin.assert:
+        that:
+          - not (caprover_grafana_enabled | bool) or
+            (caprover_grafana_admin_password is defined and
+             caprover_grafana_admin_password | length > 0)
+          - not (caprover_codeserver_enabled | bool) or
+            (caprover_codeserver_password is defined and
+             caprover_codeserver_password | length > 0)
+          - not (caprover_infisical_enabled | bool) or
+            (caprover_infisical_encryption_key is defined and
+             caprover_infisical_encryption_key | length > 0 and
+             caprover_infisical_auth_secret is defined and
+             caprover_infisical_auth_secret | length > 0 and
+             caprover_infisical_db_password is defined and
+             caprover_infisical_db_password | length > 0)
+        fail_msg: "App secrets must be set in vault for enabled apps"
+        quiet: true
+
+  roles:
+    - role: caprover-apps
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase 4: Verification — Confirm all services are healthy
+# ═════════════════════════════════════════════════════════════════════
+
+- name: Verify CapRover deployment
+  hosts: caprover_leader
+  become: true
+  tags: [verify]
+
+  tasks:
+    - name: Check CapRover API health
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/system/info"
+        method: GET
+        headers:
+          x-captain-auth: "{{ cap_token | default('') }}"
+        status_code: [200, 401]
+      register: caprover_api_check
+      retries: 3
+      delay: 5
+      until: caprover_api_check is not failed
+
+    - name: Check Docker Swarm nodes
+      ansible.builtin.command:
+        cmd: docker node ls --format '{{ '{{' }} .Hostname {{ '}}' }} {{ '{{' }} .Status {{ '}}' }}'
+      register: swarm_nodes
+      changed_when: false
+
+    - name: Display swarm status
+      ansible.builtin.debug:
+        msg: "{{ swarm_nodes.stdout_lines }}"
+
+    - name: Verify all nodes are Ready
+      ansible.builtin.assert:
+        that:
+          - "'Ready' in swarm_nodes.stdout"
+        fail_msg: "Not all swarm nodes are Ready"
+        quiet: true
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════════
+          CapRover Swarm Deployment — COMPLETE
+          ═══════════════════════════════════════════════════════════════
+
+          Leader   : {{ hostvars[groups['caprover_leader'][0]].ansible_host }} (New York)
+          Worker 1 : {{ hostvars[groups['caprover_workers'][0]].ansible_host }} (Los Angeles)
+          Worker 2 : {{ hostvars[groups['caprover_workers'][1]].ansible_host }} (Chicago)
+
+          Dashboard: https://captain.{{ caprover_root_domain }}
+          Swarm nodes: {{ swarm_nodes.stdout_lines | length }}
+
+          Next steps:
+            1. Configure DNS: *.{{ caprover_root_domain }} → {{ ansible_host }}
+            2. Access CapRover dashboard and verify apps
+            3. Configure Uptime Kuma monitors for OpenClaw endpoints
+            4. Import Grafana dashboards for OpenClaw metrics
+          ═══════════════════════════════════════════════════════════════

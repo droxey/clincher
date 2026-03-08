@@ -155,6 +155,15 @@ reverse_proxy: "caddy"
 # ── Monitoring (Optional Prometheus + Grafana) ───────────────────────
 monitoring_enabled: false
 
+# ── External Monitoring (CapRover Swarm) ─────────────────────────────
+# When true, skips local Prometheus/Grafana and exposes metrics for
+# external scraping by a CapRover-hosted monitoring stack.
+# Deploy the external stack: ansible-playbook caprover-playbook.yml
+external_monitoring_enabled: false
+# external_monitoring_prometheus_url: "https://prometheus.example.dev"
+# external_monitoring_grafana_url: "https://grafana.example.dev"
+# external_monitoring_uptimekuma_url: "https://uptime-kuma.example.dev"
+
 # ── Maintenance ──────────────────────────────────────────────────────
 backup_retention_days: 14
 log_retention_days: 30

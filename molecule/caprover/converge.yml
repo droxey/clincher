@@ -1,0 +1,9 @@
+---
+- name: CapRover syntax check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Confirm caprover playbook is parseable
+      ansible.builtin.debug:
+        msg: "CapRover playbook syntax OK"

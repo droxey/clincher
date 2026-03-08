@@ -1,0 +1,238 @@
+---
+# caprover-swarm — Install CapRover on leader, join workers to swarm
+# Leader: Initialize Docker Swarm, deploy CapRover captain
+# Workers: Join the swarm using the leader's join token
+
+# ── Install Node.js (required for CapRover CLI) ─────────────────────
+# Only needed on leader for CLI operations
+
+- name: Install Node.js LTS on leader
+  when: caprover_role == 'leader'
+  tags: [swarm]
+  block:
+    - name: Add NodeSource GPG key
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        dest: /etc/apt/keyrings/nodesource.asc
+        mode: "0644"
+      retries: 3
+      delay: 5
+      register: nodesource_gpg
+      until: nodesource_gpg is not failed
+
+    - name: Add NodeSource repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/nodesource.asc]
+          https://deb.nodesource.com/node_22.x nodistro main
+        filename: nodesource
+        state: present
+
+    - name: Install Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+    - name: Install CapRover CLI
+      community.general.npm:
+        name: caprover
+        global: true
+        state: present
+
+# ── Initialize Docker Swarm on leader ────────────────────────────────
+
+- name: Initialize Docker Swarm
+  when: caprover_role == 'leader'
+  tags: [swarm]
+  block:
+    - name: Check if Swarm is already initialized
+      ansible.builtin.command:
+        cmd: docker info --format '{{ '{{' }} .Swarm.LocalNodeState {{ '}}' }}'
+      register: swarm_state
+      changed_when: false
+
+    - name: Init Docker Swarm
+      ansible.builtin.command:
+        cmd: >-
+          docker swarm init
+          --advertise-addr {{ ansible_host }}
+      register: swarm_init
+      when: swarm_state.stdout != 'active'
+      changed_when: swarm_init.rc == 0
+
+    - name: Get Swarm worker join token
+      ansible.builtin.command:
+        cmd: docker swarm join-token worker -q
+      register: swarm_worker_token
+      changed_when: false
+
+    - name: Store join token as fact
+      ansible.builtin.set_fact:
+        caprover_swarm_join_token: "{{ swarm_worker_token.stdout }}"
+        caprover_leader_ip: "{{ ansible_host }}"
+
+# ── Deploy CapRover on leader ────────────────────────────────────────
+
+- name: Deploy CapRover captain
+  when: caprover_role == 'leader'
+  tags: [swarm]
+  block:
+    - name: Check if CapRover is running
+      ansible.builtin.command:
+        cmd: docker service ls --filter name=captain-captain --format '{{ '{{' }} .Name {{ '}}' }}'
+      register: caprover_service
+      changed_when: false
+
+    - name: Deploy CapRover via Docker
+      ansible.builtin.command:
+        cmd: >-
+          docker run -e ACCEPTED_TERMS=true
+          -e MAIN_NODE_IP_ADDRESS={{ ansible_host }}
+          -p 80:80 -p 443:443 -p 3000:3000
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v /captain:/captain
+          caprover/caprover:{{ caprover_version }}
+      when: caprover_service.stdout == ''
+      changed_when: true
+      async: 120
+      poll: 10
+
+    - name: Wait for CapRover to become healthy
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/system/info"
+        method: GET
+        headers:
+          x-captain-password: "{{ caprover_initial_password }}"
+        status_code: 200
+      register: caprover_health
+      until: caprover_health.status == 200
+      retries: 30
+      delay: 10
+
+# ── Change default password ──────────────────────────────────────────
+
+- name: Change CapRover password from default
+  when:
+    - caprover_role == 'leader'
+    - caprover_captain_password is defined
+    - caprover_captain_password | length > 0
+    - caprover_captain_password != caprover_initial_password
+  tags: [swarm]
+  block:
+    - name: Change captain password via API
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/changepassword"
+        method: POST
+        body_format: json
+        body:
+          oldPassword: "{{ caprover_initial_password }}"
+          newPassword: "{{ caprover_captain_password }}"
+        headers:
+          x-captain-password: "{{ caprover_initial_password }}"
+        status_code: [200, 400]
+      register: password_change
+      no_log: true
+
+# ── Configure root domain ───────────────────────────────────────────
+
+- name: Configure CapRover root domain
+  when: caprover_role == 'leader'
+  tags: [swarm]
+  block:
+    - name: Get auth token
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/login"
+        method: POST
+        body_format: json
+        body:
+          password: "{{ caprover_captain_password | default(caprover_initial_password) }}"
+        status_code: 200
+      register: auth_response
+      no_log: true
+
+    - name: Set auth token fact
+      ansible.builtin.set_fact:
+        caprover_auth_token: "{{ auth_response.json.data.token }}"
+      no_log: true
+
+    - name: Update root domain
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/system/changerootdomain"
+        method: POST
+        body_format: json
+        body:
+          rootDomain: "{{ caprover_root_domain }}"
+        headers:
+          x-captain-auth: "{{ caprover_auth_token }}"
+        status_code: [200, 400]
+      register: domain_change
+
+    - name: Enable HTTPS for dashboard
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/system/enablessl"
+        method: POST
+        body_format: json
+        body:
+          emailAddress: ""
+        headers:
+          x-captain-auth: "{{ caprover_auth_token }}"
+        status_code: [200, 400]
+      when: caprover_force_ssl | bool
+      register: ssl_enable
+
+    - name: Force HTTPS redirect
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/system/forcessl"
+        method: POST
+        body_format: json
+        body:
+          isEnabled: true
+        headers:
+          x-captain-auth: "{{ caprover_auth_token }}"
+        status_code: [200, 400]
+      when: caprover_force_ssl | bool
+
+# ── Join workers to swarm ────────────────────────────────────────────
+
+- name: Join worker to Docker Swarm
+  when: caprover_role == 'worker'
+  tags: [swarm]
+  block:
+    - name: Check if already in swarm
+      ansible.builtin.command:
+        cmd: docker info --format '{{ '{{' }} .Swarm.LocalNodeState {{ '}}' }}'
+      register: worker_swarm_state
+      changed_when: false
+
+    - name: Join Docker Swarm as worker
+      ansible.builtin.command:
+        cmd: >-
+          docker swarm join
+          --token {{ hostvars[groups['caprover_leader'][0]].caprover_swarm_join_token }}
+          {{ hostvars[groups['caprover_leader'][0]].ansible_host }}:2377
+      when: worker_swarm_state.stdout != 'active'
+      changed_when: true
+
+# ── Register workers in CapRover ─────────────────────────────────────
+
+- name: Register workers in CapRover
+  when: caprover_role == 'leader'
+  tags: [swarm]
+  block:
+    - name: Get current cluster nodes
+      ansible.builtin.uri:
+        url: "https://captain.{{ caprover_root_domain }}/api/v2/user/system/nodes"
+        method: GET
+        headers:
+          x-captain-auth: "{{ caprover_auth_token }}"
+        status_code: 200
+        validate_certs: false
+      register: cluster_nodes
+      retries: 3
+      delay: 5
+      until: cluster_nodes is not failed
+
+    - name: Display cluster status
+      ansible.builtin.debug:
+        msg: "CapRover swarm initialized with {{ cluster_nodes.json.data | length }} node(s)"

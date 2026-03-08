@@ -1,0 +1,7 @@
+---
+# caprover-swarm defaults
+caprover_version: "1.12.1"
+caprover_initial_password: captain42
+caprover_force_ssl: true
+caprover_wildcard_domain: "*.dev"
+caprover_root_domain: dev

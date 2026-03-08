@@ -1,0 +1,265 @@
+---
+# caprover-base — OS hardening, SSH, Docker, firewall for CapRover nodes
+# Applies to ALL nodes (leader + workers)
+
+# ── Deploy user ──────────────────────────────────────────────────────
+
+- name: Create deploy user
+  ansible.builtin.user:
+    name: "{{ caprover_deploy_user }}"
+    shell: /bin/bash
+    groups: sudo
+    append: true
+    create_home: true
+  tags: [base]
+
+- name: Grant passwordless sudo
+  ansible.builtin.copy:
+    content: "{{ caprover_deploy_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    dest: "/etc/sudoers.d/{{ caprover_deploy_user }}"
+    mode: "0440"
+    validate: "visudo -cf %s"
+  tags: [base]
+
+# ── SSH hardening ────────────────────────────────────────────────────
+
+- name: Deploy SSH hardening config
+  ansible.builtin.template:
+    src: 99-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-hardening.conf
+    mode: "0600"
+    validate: "sshd -t -f %s"
+  notify: Restart sshd
+  tags: [base]
+
+# ── APT prerequisites ───────────────────────────────────────────────
+
+- name: Install system packages
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - jq
+      - htop
+      - iotop
+      - sysstat
+      - net-tools
+      - chrony
+      - libpam-pwquality
+      - auditd
+      - audispd-plugins
+      - acl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [base]
+
+# ── Time synchronization ────────────────────────────────────────────
+
+- name: Enable chrony NTP
+  ansible.builtin.systemd:
+    name: chrony
+    enabled: true
+    state: started
+  tags: [base]
+
+# ── Docker installation ─────────────────────────────────────────────
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  retries: 3
+  delay: 5
+  register: docker_gpg
+  until: docker_gpg is not failed
+  tags: [base]
+
+- name: Add Docker APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
+    filename: docker
+    state: present
+  tags: [base]
+
+- name: Install Docker CE
+  ansible.builtin.apt:
+    name:
+      - "docker-ce={{ caprover_docker_ce_version }}"
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  tags: [base]
+
+- name: Add deploy user to docker group
+  ansible.builtin.user:
+    name: "{{ caprover_deploy_user }}"
+    groups: docker
+    append: true
+  tags: [base]
+
+- name: Deploy Docker daemon config
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+  notify: Restart docker
+  tags: [base]
+
+- name: Enable Docker service
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  tags: [base]
+
+# ── System tuning ────────────────────────────────────────────────────
+
+- name: Deploy sysctl hardening
+  ansible.builtin.template:
+    src: 99-caprover.conf.j2
+    dest: /etc/sysctl.d/99-caprover.conf
+    mode: "0644"
+  notify: Reload sysctl
+  tags: [base]
+
+# ── Kernel hardening ─────────────────────────────────────────────────
+
+- name: Deploy kernel security sysctl
+  ansible.builtin.template:
+    src: 99-kernel-hardening.conf.j2
+    dest: /etc/sysctl.d/99-kernel-hardening.conf
+    mode: "0644"
+  notify: Reload sysctl
+  when: caprover_kernel_hardening | bool
+  tags: [base]
+
+# ── Firewall (UFW) ──────────────────────────────────────────────────
+
+- name: Set UFW default deny incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+  tags: [base]
+
+- name: Set UFW default allow outgoing
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+  tags: [base]
+
+- name: Allow SSH port
+  community.general.ufw:
+    rule: limit
+    port: "{{ caprover_ssh_port | string }}"
+    proto: tcp
+    comment: "SSH (rate-limited)"
+  tags: [base]
+
+- name: Allow admin IP full access
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ caprover_admin_ip }}"
+    comment: "Admin IP full access"
+  when: caprover_admin_ip | length > 0
+  tags: [base]
+
+- name: Allow CapRover and Swarm ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ caprover_ufw_allowed_ports }}"
+  tags: [base]
+
+- name: Allow inter-node Swarm traffic (leader)
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ hostvars[item].ansible_host }}"
+    comment: "Swarm peer {{ item }}"
+  loop: "{{ groups['caprover'] }}"
+  when: inventory_hostname != item
+  tags: [base]
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+  tags: [base]
+
+# ── Fail2ban ─────────────────────────────────────────────────────────
+
+- name: Deploy fail2ban SSH jail
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    mode: "0644"
+  notify: Restart fail2ban
+  tags: [base]
+
+# ── Unattended upgrades ─────────────────────────────────────────────
+
+- name: Configure unattended upgrades
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    mode: "0644"
+  when: caprover_unattended_upgrades | bool
+  tags: [base]
+
+# ── Audit daemon ─────────────────────────────────────────────────────
+
+- name: Enable auditd
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: true
+    state: started
+  tags: [base]
+
+# ── Password quality (PAM) ──────────────────────────────────────────
+
+- name: Configure PAM password quality
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: "^{{ item.key }}"
+    line: "{{ item.key }} = {{ item.value }}"
+    state: present
+  loop:
+    - { key: "minlen", value: "14" }
+    - { key: "dcredit", value: "-1" }
+    - { key: "ucredit", value: "-1" }
+    - { key: "ocredit", value: "-1" }
+    - { key: "lcredit", value: "-1" }
+  tags: [base]
+
+# ── Disable IPv6 (optional) ─────────────────────────────────────────
+
+- name: Disable IPv6 via sysctl
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_set: true
+    reload: true
+  loop:
+    - net.ipv6.conf.all.disable_ipv6
+    - net.ipv6.conf.default.disable_ipv6
+  when: not (caprover_ipv6_enabled | bool)
+  tags: [base]
+
+# ── Flush handlers ───────────────────────────────────────────────────
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+  tags: [base]

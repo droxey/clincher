@@ -1,0 +1,124 @@
+---
+# CapRover Swarm Configuration
+# Override these in your own group_vars or pass via --extra-vars
+
+# --- Host ---
+caprover_deploy_user: deploy
+caprover_ssh_port: 9922
+caprover_admin_ip: YOUR_ADMIN_IP
+
+# --- Domain ---
+caprover_wildcard_domain: "*.dev"
+caprover_root_domain: dev
+
+# --- CapRover ---
+caprover_version: "1.12.1"
+caprover_initial_password: captain42
+caprover_force_ssl: true
+
+# --- Docker ---
+caprover_docker_ce_version: "5:27.5.1~3-0~ubuntu-noble"
+
+# --- System tuning ---
+caprover_swappiness: 10
+caprover_inotify_max_watches: 524288
+caprover_inotify_max_instances: 1024
+caprover_somaxconn: 65535
+
+# --- Docker daemon ---
+caprover_docker_log_max_size: "10m"
+caprover_docker_log_max_file: "3"
+caprover_docker_dns:
+  - "1.1.1.1"
+  - "8.8.8.8"
+caprover_docker_max_concurrent_downloads: 10
+caprover_docker_max_concurrent_uploads: 5
+
+# --- Firewall ---
+caprover_ufw_allowed_ports:
+  - { port: 80, proto: tcp, comment: "HTTP" }
+  - { port: 443, proto: tcp, comment: "HTTPS" }
+  - { port: 3000, proto: tcp, comment: "CapRover UI (initial setup)" }
+  - { port: 996, proto: tcp, comment: "CapRover registry" }
+  - { port: 7946, proto: any, comment: "Docker Swarm node discovery" }
+  - { port: 4789, proto: udp, comment: "Docker overlay network" }
+  - { port: 2377, proto: tcp, comment: "Docker Swarm management" }
+
+# --- Fail2ban ---
+caprover_fail2ban_maxretry: 3
+caprover_fail2ban_bantime: 3600
+caprover_fail2ban_findtime: 600
+
+# --- SSH hardening ---
+caprover_ssh_max_auth_tries: 3
+caprover_ssh_client_alive_interval: 300
+caprover_ssh_client_alive_count_max: 2
+caprover_ssh_allow_agent_forwarding: false
+caprover_ssh_allow_tcp_forwarding: false
+caprover_ssh_x11_forwarding: false
+
+# --- OS hardening (sysctl) ---
+caprover_kernel_hardening: true
+
+# --- Unattended upgrades ---
+caprover_unattended_upgrades: true
+caprover_auto_reboot: true
+caprover_auto_reboot_time: "05:00"
+
+# --- CapRover apps ---
+# Prometheus — scrapes OpenClaw metrics
+caprover_prometheus_enabled: true
+caprover_prometheus_version: "v3.2.1"
+caprover_prometheus_retention: "30d"
+caprover_prometheus_memory_limit: "512M"
+caprover_prometheus_cpu_limit: "1.0"
+
+# Grafana — dashboards
+caprover_grafana_enabled: true
+caprover_grafana_version: "11.5.2"
+caprover_grafana_memory_limit: "512M"
+caprover_grafana_cpu_limit: "1.0"
+
+# Uptime Kuma — uptime monitoring
+caprover_uptimekuma_enabled: true
+caprover_uptimekuma_version: "1"
+caprover_uptimekuma_memory_limit: "256M"
+caprover_uptimekuma_cpu_limit: "0.5"
+
+# code-server — VS Code in browser
+caprover_codeserver_enabled: true
+caprover_codeserver_version: "4.96.4"
+caprover_codeserver_memory_limit: "2G"
+caprover_codeserver_cpu_limit: "2.0"
+
+# Infisical — secrets management
+caprover_infisical_enabled: true
+caprover_infisical_version: "v0.105.1-postgres"
+caprover_infisical_memory_limit: "1G"
+caprover_infisical_cpu_limit: "1.0"
+caprover_infisical_postgres_version: "16-alpine"
+caprover_infisical_redis_version: "7-alpine"
+caprover_infisical_postgres_memory_limit: "512M"
+caprover_infisical_redis_memory_limit: "128M"
+
+# Redis exporter — for Prometheus
+caprover_redis_exporter_enabled: true
+caprover_redis_exporter_version: "v1.67.0"
+
+# --- OpenClaw integration ---
+# Set these to point monitoring at your OpenClaw server
+openclaw_server_ip: YOUR_OPENCLAW_SERVER_IP
+openclaw_server_domain: openclaw.yourdomain.com
+openclaw_litellm_port: 4000
+openclaw_metrics_port: 9090
+
+# --- External monitoring (refactor) ---
+# When true, the main OpenClaw playbook skips local monitoring
+# and configures metric endpoints for external scraping
+external_monitoring_enabled: false
+external_monitoring_prometheus_url: ""
+external_monitoring_grafana_url: ""
+external_monitoring_uptimekuma_url: ""
+
+# --- IPv6 ---
+caprover_ipv6_enabled: true

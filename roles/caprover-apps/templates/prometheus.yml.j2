@@ -1,0 +1,38 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: openclaw-litellm
+    static_configs:
+      - targets:
+          - "{{ openclaw_server_ip }}:{{ openclaw_litellm_port }}"
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scheme: http
+
+  - job_name: openclaw-health
+    static_configs:
+      - targets:
+          - "{{ openclaw_server_domain }}:443"
+    scrape_interval: 60s
+    metrics_path: /health
+    scheme: https
+    tls_config:
+      insecure_skip_verify: false
+
+{% if caprover_redis_exporter_enabled | bool %}
+  - job_name: redis
+    static_configs:
+      - targets:
+          - "srv-captain--redis-exporter:9121"
+    scrape_interval: 60s
+{% endif %}
+
+  - job_name: caprover-node-metrics
+    static_configs:
+      - targets:
+{% for host in groups['caprover'] %}
+          - "{{ hostvars[host].ansible_host }}:9100"
+{% endfor %}
+    scrape_interval: 30s

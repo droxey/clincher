@@ -1,0 +1,19 @@
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "{{ caprover_docker_log_max_size }}",
+    "max-file": "{{ caprover_docker_log_max_file }}"
+  },
+  "storage-driver": "overlay2",
+  "live-restore": false,
+  "default-ulimits": {
+    "nofile": {
+      "Name": "nofile",
+      "Soft": 65536,
+      "Hard": 65536
+    }
+  },
+  "dns": {{ caprover_docker_dns | to_json }},
+  "max-concurrent-downloads": {{ caprover_docker_max_concurrent_downloads }},
+  "max-concurrent-uploads": {{ caprover_docker_max_concurrent_uploads }}
+}

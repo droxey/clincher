@@ -1,0 +1,445 @@
+---
+# caprover-apps — Deploy monitoring and management apps via CapRover API
+# Runs ONLY on the leader node
+# Apps: Prometheus, Grafana, Uptime Kuma, code-server, Infisical
+
+# ── Authenticate with CapRover ───────────────────────────────────────
+
+- name: Get CapRover auth token
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:3000/api/v2/login"
+    method: POST
+    body_format: json
+    body:
+      password: "{{ caprover_captain_password | default(caprover_initial_password) }}"
+    status_code: 200
+  register: caprover_login
+  no_log: true
+  when: caprover_role == 'leader'
+  tags: [apps]
+
+- name: Set auth token
+  ansible.builtin.set_fact:
+    cap_token: "{{ caprover_login.json.data.token }}"
+  no_log: true
+  when: caprover_role == 'leader'
+  tags: [apps]
+
+# ── Helper: Register app via CapRover API ────────────────────────────
+
+# ── Prometheus ───────────────────────────────────────────────────────
+
+- name: Deploy Prometheus
+  when:
+    - caprover_role == 'leader'
+    - caprover_prometheus_enabled | bool
+  tags: [apps, prometheus]
+  block:
+    - name: Register Prometheus app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: prometheus
+          hasPersistentData: true
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Deploy Prometheus config
+      ansible.builtin.template:
+        src: prometheus.yml.j2
+        dest: /captain/data/config/prometheus/prometheus.yml
+        mode: "0644"
+
+    - name: Ensure Prometheus config directory
+      ansible.builtin.file:
+        path: /captain/data/config/prometheus
+        state: directory
+        mode: "0755"
+
+    - name: Configure Prometheus app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: prometheus
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "prom/prometheus:{{ caprover_prometheus_version }}"
+          envVars: []
+          volumes:
+            - hostPath: /captain/data/config/prometheus
+              containerPath: /etc/prometheus
+            - hostPath: /captain/data/prometheus
+              containerPath: /prometheus
+          ports: []
+          containerHttpPort: 9090
+          description: "Prometheus monitoring — scrapes OpenClaw metrics"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_prometheus_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+            cpuLimit: "{{ caprover_prometheus_cpu_limit }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+# ── Grafana ──────────────────────────────────────────────────────────
+
+- name: Deploy Grafana
+  when:
+    - caprover_role == 'leader'
+    - caprover_grafana_enabled | bool
+  tags: [apps, grafana]
+  block:
+    - name: Register Grafana app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: grafana
+          hasPersistentData: true
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Deploy Grafana datasource config
+      ansible.builtin.template:
+        src: grafana-datasource.yml.j2
+        dest: /captain/data/config/grafana/provisioning/datasources/prometheus.yml
+        mode: "0644"
+
+    - name: Ensure Grafana provisioning directory
+      ansible.builtin.file:
+        path: /captain/data/config/grafana/provisioning/datasources
+        state: directory
+        mode: "0755"
+        recurse: true
+
+    - name: Configure Grafana app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: grafana
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "grafana/grafana-oss:{{ caprover_grafana_version }}"
+          envVars:
+            - key: GF_SECURITY_ADMIN_PASSWORD
+              value: "{{ caprover_grafana_admin_password }}"
+            - key: GF_SECURITY_ADMIN_USER
+              value: admin
+            - key: GF_SERVER_ROOT_URL
+              value: "https://grafana.{{ caprover_root_domain }}"
+            - key: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            - key: GF_SECURITY_COOKIE_SECURE
+              value: "true"
+            - key: GF_SECURITY_STRICT_TRANSPORT_SECURITY
+              value: "true"
+          volumes:
+            - hostPath: /captain/data/grafana
+              containerPath: /var/lib/grafana
+            - hostPath: /captain/data/config/grafana/provisioning
+              containerPath: /etc/grafana/provisioning
+          ports: []
+          containerHttpPort: 3000
+          description: "Grafana dashboards — OpenClaw monitoring"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_grafana_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+            cpuLimit: "{{ caprover_grafana_cpu_limit }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+      no_log: true
+
+# ── Uptime Kuma ──────────────────────────────────────────────────────
+
+- name: Deploy Uptime Kuma
+  when:
+    - caprover_role == 'leader'
+    - caprover_uptimekuma_enabled | bool
+  tags: [apps, uptimekuma]
+  block:
+    - name: Register Uptime Kuma app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: uptime-kuma
+          hasPersistentData: true
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Configure Uptime Kuma app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: uptime-kuma
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "louislam/uptime-kuma:{{ caprover_uptimekuma_version }}"
+          envVars: []
+          volumes:
+            - hostPath: /captain/data/uptime-kuma
+              containerPath: /app/data
+          ports: []
+          containerHttpPort: 3001
+          description: "Uptime Kuma — external uptime monitoring for OpenClaw"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_uptimekuma_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+            cpuLimit: "{{ caprover_uptimekuma_cpu_limit }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+# ── code-server (VS Code) ───────────────────────────────────────────
+
+- name: Deploy code-server
+  when:
+    - caprover_role == 'leader'
+    - caprover_codeserver_enabled | bool
+  tags: [apps, codeserver]
+  block:
+    - name: Register code-server app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: code-server
+          hasPersistentData: true
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Configure code-server app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: code-server
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "codercom/code-server:{{ caprover_codeserver_version }}"
+          envVars:
+            - key: PASSWORD
+              value: "{{ caprover_codeserver_password }}"
+          volumes:
+            - hostPath: /captain/data/code-server
+              containerPath: /home/coder
+          ports: []
+          containerHttpPort: 8080
+          description: "VS Code (code-server) — browser-based IDE"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_codeserver_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+            cpuLimit: "{{ caprover_codeserver_cpu_limit }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+      no_log: true
+
+# ── Infisical (secrets management) ───────────────────────────────────
+
+- name: Deploy Infisical stack
+  when:
+    - caprover_role == 'leader'
+    - caprover_infisical_enabled | bool
+  tags: [apps, infisical]
+  block:
+    - name: Register Infisical Postgres app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: infisical-db
+          hasPersistentData: true
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Configure Infisical Postgres
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: infisical-db
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "postgres:{{ caprover_infisical_postgres_version }}"
+          envVars:
+            - key: POSTGRES_DB
+              value: infisical
+            - key: POSTGRES_USER
+              value: infisical
+            - key: POSTGRES_PASSWORD
+              value: "{{ caprover_infisical_db_password }}"
+          volumes:
+            - hostPath: /captain/data/infisical-db
+              containerPath: /var/lib/postgresql/data
+          ports: []
+          containerHttpPort: 5432
+          description: "PostgreSQL for Infisical"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_infisical_postgres_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+      no_log: true
+
+    - name: Register Infisical Redis app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: infisical-redis
+          hasPersistentData: true
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Configure Infisical Redis
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: infisical-redis
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "redis:{{ caprover_infisical_redis_version }}"
+          envVars: []
+          volumes:
+            - hostPath: /captain/data/infisical-redis
+              containerPath: /data
+          ports: []
+          containerHttpPort: 6379
+          description: "Redis for Infisical"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_infisical_redis_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Register Infisical app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/register"
+        method: POST
+        body_format: json
+        body:
+          appName: infisical
+          hasPersistentData: false
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+
+    - name: Configure Infisical app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/update"
+        method: POST
+        body_format: json
+        body:
+          appName: infisical
+          instanceCount: 1
+          captainDefinitionContent:
+            schemaVersion: 2
+            imageName: "infisical/infisical:{{ caprover_infisical_version }}"
+          envVars:
+            - key: ENCRYPTION_KEY
+              value: "{{ caprover_infisical_encryption_key }}"
+            - key: AUTH_SECRET
+              value: "{{ caprover_infisical_auth_secret }}"
+            - key: DB_CONNECTION_URI
+              value: "postgresql://infisical:{{ caprover_infisical_db_password }}@srv-captain--infisical-db:5432/infisical"
+            - key: REDIS_URL
+              value: "redis://srv-captain--infisical-redis:6379"
+            - key: SITE_URL
+              value: "https://infisical.{{ caprover_root_domain }}"
+            - key: NODE_ENV
+              value: production
+          volumes: []
+          ports: []
+          containerHttpPort: 8080
+          description: "Infisical — secrets management platform"
+          resourceLimits:
+            memoryLimitInMB: "{{ (caprover_infisical_memory_limit | regex_replace('[^0-9]', '')) | int }}"
+            cpuLimit: "{{ caprover_infisical_cpu_limit }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+      no_log: true
+
+# ── Enable HTTPS for all apps ────────────────────────────────────────
+
+- name: Enable HTTPS on deployed apps
+  when: caprover_role == 'leader'
+  tags: [apps]
+  block:
+    - name: Build list of apps to enable SSL
+      ansible.builtin.set_fact:
+        ssl_apps: >-
+          {{
+            (caprover_prometheus_enabled | bool) | ternary(['prometheus'], []) +
+            (caprover_grafana_enabled | bool) | ternary(['grafana'], []) +
+            (caprover_uptimekuma_enabled | bool) | ternary(['uptime-kuma'], []) +
+            (caprover_codeserver_enabled | bool) | ternary(['code-server'], []) +
+            (caprover_infisical_enabled | bool) | ternary(['infisical'], [])
+          }}
+
+    - name: Enable HTTPS for each app
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/user/apps/appDefinitions/enablecustomdomainssl"
+        method: POST
+        body_format: json
+        body:
+          appName: "{{ item }}"
+        headers:
+          x-captain-auth: "{{ cap_token }}"
+        status_code: [200, 400]
+      loop: "{{ ssl_apps }}"
+      when: caprover_force_ssl | bool
+
+# ── Display access info ──────────────────────────────────────────────
+
+- name: Display deployed app URLs
+  when: caprover_role == 'leader'
+  tags: [apps]
+  ansible.builtin.debug:
+    msg: |
+      CapRover Swarm — Deployed Apps
+      ═══════════════════════════════════════════════════
+      CapRover Dashboard : https://captain.{{ caprover_root_domain }}
+      {% if caprover_prometheus_enabled | bool %}
+      Prometheus         : https://prometheus.{{ caprover_root_domain }}
+      {% endif %}
+      {% if caprover_grafana_enabled | bool %}
+      Grafana            : https://grafana.{{ caprover_root_domain }}
+      {% endif %}
+      {% if caprover_uptimekuma_enabled | bool %}
+      Uptime Kuma        : https://uptime-kuma.{{ caprover_root_domain }}
+      {% endif %}
+      {% if caprover_codeserver_enabled | bool %}
+      code-server        : https://code-server.{{ caprover_root_domain }}
+      {% endif %}
+      {% if caprover_infisical_enabled | bool %}
+      Infisical          : https://infisical.{{ caprover_root_domain }}
+      {% endif %}
+      ═══════════════════════════════════════════════════

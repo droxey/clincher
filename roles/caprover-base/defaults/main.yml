@@ -1,0 +1,39 @@
+---
+# caprover-base defaults
+caprover_deploy_user: deploy
+caprover_ssh_port: 9922
+caprover_docker_ce_version: "5:27.5.1~3-0~ubuntu-noble"
+caprover_swappiness: 10
+caprover_inotify_max_watches: 524288
+caprover_inotify_max_instances: 1024
+caprover_somaxconn: 65535
+caprover_docker_log_max_size: "10m"
+caprover_docker_log_max_file: "3"
+caprover_docker_dns:
+  - "1.1.1.1"
+  - "8.8.8.8"
+caprover_docker_max_concurrent_downloads: 10
+caprover_docker_max_concurrent_uploads: 5
+caprover_fail2ban_maxretry: 3
+caprover_fail2ban_bantime: 3600
+caprover_fail2ban_findtime: 600
+caprover_ssh_max_auth_tries: 3
+caprover_ssh_client_alive_interval: 300
+caprover_ssh_client_alive_count_max: 2
+caprover_ssh_allow_agent_forwarding: false
+caprover_ssh_allow_tcp_forwarding: false
+caprover_ssh_x11_forwarding: false
+caprover_kernel_hardening: true
+caprover_unattended_upgrades: true
+caprover_auto_reboot: true
+caprover_auto_reboot_time: "05:00"
+caprover_ipv6_enabled: true
+caprover_admin_ip: ""
+caprover_ufw_allowed_ports:
+  - { port: 80, proto: tcp, comment: "HTTP" }
+  - { port: 443, proto: tcp, comment: "HTTPS" }
+  - { port: 3000, proto: tcp, comment: "CapRover UI (initial setup)" }
+  - { port: 996, proto: tcp, comment: "CapRover registry" }
+  - { port: 7946, proto: any, comment: "Docker Swarm node discovery" }
+  - { port: 4789, proto: udp, comment: "Docker overlay network" }
+  - { port: 2377, proto: tcp, comment: "Docker Swarm management" }

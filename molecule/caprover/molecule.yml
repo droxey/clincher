@@ -1,0 +1,52 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+driver:
+  name: default
+  options:
+    managed: false
+platforms:
+  - name: localhost
+    managed: false
+provisioner:
+  name: ansible
+  playbooks:
+    converge: converge.yml
+  inventory:
+    hosts:
+      all:
+        children:
+          caprover_leader:
+            hosts:
+              localhost:
+                ansible_connection: local
+                caprover_role: leader
+                ansible_host: 127.0.0.1
+          caprover_workers:
+            hosts: {}
+          caprover:
+            children:
+              caprover_leader:
+              caprover_workers:
+        vars:
+          caprover_deploy_user: deploy
+          caprover_ssh_port: 9922
+          caprover_admin_ip: "127.0.0.1"
+          caprover_root_domain: test.dev
+          caprover_captain_password: testpassword
+          caprover_grafana_admin_password: testgrafana
+          caprover_codeserver_password: testcode
+          caprover_infisical_encryption_key: "0123456789abcdef"
+          caprover_infisical_auth_secret: "0123456789abcdef0123456789abcdef"
+          caprover_infisical_db_password: testinfisical
+  config_options:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+verifier:
+  name: ansible
+scenario:
+  test_sequence:
+    - dependency
+    - syntax

@@ -1,0 +1,8 @@
+---
+# caprover-apps defaults
+caprover_prometheus_enabled: true
+caprover_grafana_enabled: true
+caprover_uptimekuma_enabled: true
+caprover_codeserver_enabled: true
+caprover_infisical_enabled: true
+caprover_redis_exporter_enabled: true
