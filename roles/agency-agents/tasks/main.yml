@@ -1,0 +1,53 @@
+---
+# Agency Agents: Clone prompt library and deploy into OpenClaw container
+# Source: https://github.com/msitarzewski/agency-agents
+# These are AI agent personality/prompt files (markdown) — not services.
+# Placed in /root/.openclaw/agents/ inside the container for reference.
+
+- name: Create agency-agents staging directory on host
+  ansible.builtin.file:
+    path: "{{ openclaw_base_dir }}/agency-agents"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Clone agency-agents repository
+  ansible.builtin.git:
+    repo: "{{ agency_agents_repo }}"
+    dest: "{{ openclaw_base_dir }}/agency-agents/repo"
+    version: "{{ agency_agents_version }}"
+    depth: 1
+    force: true
+  register: agents_clone
+  retries: 3
+  delay: 10
+  until: agents_clone is not failed
+
+- name: Create agents directory inside container
+  ansible.builtin.command: docker exec openclaw mkdir -p /root/.openclaw/agents
+  changed_when: false
+
+- name: Copy agent divisions into container
+  ansible.builtin.command: >
+    docker cp
+    {{ openclaw_base_dir }}/agency-agents/repo/{{ item }}/
+    openclaw:/root/.openclaw/agents/{{ item }}
+  loop: "{{ agency_agents_divisions }}"
+  changed_when: false
+
+- name: Set permissions on agents directory inside container
+  ansible.builtin.command: "docker exec openclaw {{ item }}"
+  loop:
+    - chmod -R 700 /root/.openclaw/agents
+    - sh -c 'find /root/.openclaw/agents -type f -exec chmod 600 {} \;'
+  changed_when: false
+
+- name: List deployed agent files
+  ansible.builtin.command: docker exec openclaw find /root/.openclaw/agents -name '*.md' -type f
+  register: deployed_agents
+  changed_when: false
+
+- name: Show deployed agent count
+  ansible.builtin.debug:
+    msg: "Deployed {{ deployed_agents.stdout_lines | length }} agency-agents prompt files across {{ agency_agents_divisions | length }} divisions"

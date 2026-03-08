@@ -140,6 +140,27 @@ openclaw_gateway_tool_denials:
   - canvas
   - cron
 
+# ── Agency Agents (Prompt Library) ────────────────────────────────────
+# 61 AI agent personas from https://github.com/msitarzewski/agency-agents
+# Deployed as markdown prompt files into /root/.openclaw/agents/
+agency_agents_enabled: true
+agency_agents_repo: "https://github.com/msitarzewski/agency-agents.git"
+# Pin to commit SHA for reproducible deploys — git tags can be force-pushed.
+# SHA below is the HEAD of main as of 2026-03-08. To update:
+#   git ls-remote https://github.com/msitarzewski/agency-agents refs/heads/main
+agency_agents_version: "512f3773d187263e5235c475a82aaae829af82ba"
+# Which agent divisions to install (all 9 available):
+agency_agents_divisions:
+  - engineering
+  - design
+  - marketing
+  - product
+  - project-management
+  - testing
+  - support
+  - spatial-computing
+  - specialized
+
 # ── Channel ──────────────────────────────────────────────────────────
 telegram_enabled: true
 # telegram_bot_token lives in vault.yml

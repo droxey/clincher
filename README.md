@@ -189,6 +189,7 @@ Tokens and encryption keys left empty in `vault.yml` are auto-generated on first
 | `openclaw-config` | 3 | Smokescreen ACL, LiteLLM config, Docker Compose file, `.env` with secrets |
 | `openclaw-deploy` | 4 | Build Smokescreen image, `docker compose up`, wait for healthy |
 | `openclaw-harden` | 5 | Gateway auth, sandbox isolation, resource caps, tool denials, SOUL.md |
+| `agency-agents` | 5.1 | Clone and deploy [agency-agents](https://github.com/msitarzewski/agency-agents) prompt library (optional, `agency_agents_enabled: true`) |
 | `openclaw-integrate` | 6-8 | LiteLLM as model proxy, Telegram channel, Voyage AI memory index |
 | `reverse-proxy` | 9 | Caddy (default), Cloudflare Tunnel, or Tailscale Serve |
 | `verify` | 10 | Security audit, container health, egress tests, config spot-checks |
@@ -213,7 +214,7 @@ ansible-playbook playbook.yml --ask-vault-pass --check --diff
 ansible-playbook playbook.yml --ask-vault-pass -e monitoring_enabled=true
 ```
 
-Available tags: `base`, `config`, `deploy`, `harden`, `integrate`, `proxy`, `verify`, `maintenance`, `monitoring`.
+Available tags: `base`, `config`, `deploy`, `harden`, `agents`, `integrate`, `proxy`, `verify`, `maintenance`, `monitoring`.
 
 ### Key Configuration (vars.yml)
 
@@ -230,6 +231,7 @@ monitoring_enabled: false              # true → deploys Prometheus + Grafana
 tailscale_enabled: false               # true → replaces public SSH with Tailscale
 disable_ipv6: false                    # true → disables IPv6 system-wide
 telegram_enabled: true                 # false → skips Telegram channel setup
+agency_agents_enabled: true            # false → skips agency-agents prompt library
 
 # ── Resource Tuning ───────────────────────────────────
 openclaw_memory: "16G"                 # Tuned for 64 GB Production tier
@@ -272,6 +274,7 @@ ansible/
     ├── openclaw-config/               # Smokescreen, LiteLLM, Compose, .env templates
     ├── openclaw-deploy/               # Build egress image, docker compose up, health wait
     ├── openclaw-harden/               # 30+ config set commands, SOUL.md, security audit
+    ├── agency-agents/                 # Clone and deploy agency-agents prompt library
     ├── openclaw-integrate/            # Model proxy, Telegram, memory index
     ├── reverse-proxy/                 # Caddy / Tunnel / Tailscale (conditional)
     ├── verify/                        # Post-deploy health and security checks

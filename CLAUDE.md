@@ -57,6 +57,7 @@ clincher/
     ├── openclaw-config/         # Step 3: Smokescreen, LiteLLM, Compose templates
     ├── openclaw-deploy/         # Step 4: docker compose up, health wait
     ├── openclaw-harden/         # Step 5: gateway/sandbox hardening
+    ├── agency-agents/           # Step 5.1: agency-agents prompt library (optional)
     ├── openclaw-integrate/      # Steps 6-8: API, Telegram, memory
     ├── reverse-proxy/           # Step 9: Caddy/Tunnel/Tailscale
     ├── verify/                  # Step 10: post-deploy verification

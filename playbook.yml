@@ -11,7 +11,7 @@
 # Prerequisite: apt install sshpass (needed for Ansible to send SSH passwords).
 # After bootstrap pushes your SSH key, subsequent runs use key-based auth only.
 #
-# Tags: base, config, deploy, harden, integrate, proxy, verify, maintenance, monitoring
+# Tags: base, config, deploy, harden, agents, integrate, proxy, verify, maintenance, monitoring
 
 # ── Bootstrap: ensure deploy user can SSH on ssh_port ────────────────────
 # Handles three server states:
@@ -349,6 +349,9 @@
       tags: [deploy]
     - role: openclaw-harden
       tags: [harden]
+    - role: agency-agents
+      tags: [agents]
+      when: agency_agents_enabled | default(false) | bool
     - role: openclaw-integrate
       tags: [integrate]
     - role: reverse-proxy
