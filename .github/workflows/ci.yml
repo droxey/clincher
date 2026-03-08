@@ -59,11 +59,14 @@ jobs:
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r requirements.yml
 
-      - name: Run syntax check
+      - name: Run syntax check (main playbook)
         run: ansible-playbook playbook.yml --syntax-check
 
+      - name: Run syntax check (caprover playbook)
+        run: ansible-playbook caprover-playbook.yml --syntax-check
+
   molecule:
-    name: "Molecule (${{ matrix.scenario }})"
+    name: "Molecule (${{ matrix.role || matrix.scenario }})"
     runs-on: ubuntu-24.04
     needs: [lint, syntax]
     strategy:
@@ -84,6 +87,8 @@ jobs:
             role: maintenance
           - scenario: default
             role: monitoring
+          - scenario: caprover
+            role: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -102,7 +107,7 @@ jobs:
 
       - name: Run Molecule (project-level)
         if: matrix.role == ''
-        run: molecule test
+        run: molecule test -s ${{ matrix.scenario }}
         env:
           ANSIBLE_FORCE_COLOR: "1"
 

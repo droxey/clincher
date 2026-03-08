@@ -28,7 +28,6 @@
     src: 99-hardening.conf.j2
     dest: /etc/ssh/sshd_config.d/99-hardening.conf
     mode: "0600"
-    validate: "sshd -t -f %s"
   notify: Restart sshd
   tags: [base]
 
@@ -96,7 +95,7 @@
   ansible.builtin.apt:
     name:
       - "docker-ce={{ caprover_docker_ce_version }}"
-      - docker-ce-cli
+      - "docker-ce-cli={{ caprover_docker_ce_version }}"
       - containerd.io
       - docker-compose-plugin
     state: present
