@@ -73,6 +73,67 @@ ansible-pull -U https://github.com/droxey/clincher.git playbook.yml \
 
 ---
 
+## Local Verification (No Server Required)
+
+You can validate every template, variable, and script in this repository without a VPS, Docker, or root access. The entire CI pipeline runs locally on any machine with Python 3.12+.
+
+### Run the Full CI Suite
+
+```bash
+# Install dependencies (one-time setup)
+pip install -r requirements.txt
+ansible-galaxy collection install -r requirements.yml
+
+# Run everything CI runs — linting, syntax checking, and all Molecule tests
+make check
+```
+
+`make check` runs `make lint` then `make test`, matching the GitHub Actions pipeline exactly.
+
+### What Each Command Validates
+
+| Command | What It Checks |
+|---------|----------------|
+| `make lint` | YAML syntax (`yamllint`), Ansible best practices (`ansible-lint` production profile), playbook parsing (`--syntax-check`) |
+| `make test` | Project-level variable validation and secret generation via Molecule |
+| `make check` | Both of the above — identical to what CI runs on every push and PR |
+
+### Run Individual Role Tests
+
+Each role with templates has its own Molecule test that renders every Jinja2 template to a temp directory and verifies the output — no Docker or server needed:
+
+```bash
+# Test a specific role's templates
+cd roles/base && molecule test              # SSH hardening, sysctl, daemon.json, fail2ban
+cd roles/openclaw-config && molecule test    # Docker Compose, .env, Smokescreen ACL, LiteLLM config
+cd roles/openclaw-harden && molecule test    # SOUL.md agent guidelines
+cd roles/reverse-proxy && molecule test      # Caddyfile, Caddy compose, Tunnel compose
+cd roles/maintenance && molecule test        # Backup, watchdog, token rotation scripts
+cd roles/monitoring && molecule test         # Prometheus config, monitoring compose
+```
+
+### What Molecule Tests Cover
+
+Every Molecule scenario uses a **delegated driver with local connection** — no containers, no VMs, no SSH. Tests render templates with realistic variable values and verify:
+
+- **File creation** — all expected config files are generated
+- **Content correctness** — rendered output contains expected services, domains, keys, and settings
+- **Permissions** — secret files (`.env`, encryption keys) have mode `0600`; scripts have `0700`
+- **Conditional logic** — Jinja2 conditionals (e.g., `disable_ipv6`, `monitoring_enabled`) produce the right output
+- **Variable validation** — the playbook's `pre_tasks` assertions catch missing or placeholder values before any deployment step runs
+
+### CI Pipeline Overview
+
+Every push and PR triggers three jobs in GitHub Actions:
+
+1. **Lint** — `yamllint` + `ansible-lint` (production profile, strict mode)
+2. **Syntax** — `ansible-playbook --syntax-check` on both playbooks
+3. **Molecule** — 7 parallel test scenarios (1 project-level + 6 role-level)
+
+All three must pass before merge. The same checks run locally via `make check`.
+
+---
+
 ## Security
 
 ```bash
@@ -118,6 +179,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 
 ## Table of Contents
 
+- [Local Verification (No Server Required)](#local-verification-no-server-required)
 - [Automated Deployment (Ansible)](#automated-deployment-ansible)
 - [Manual Deployment (Steps 1-14)](#manual-deployment) *(collapsible)*
   - [Step 1: Prerequisites](#step-1-prerequisites)

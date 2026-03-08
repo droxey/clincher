@@ -73,9 +73,17 @@ jobs:
           - scenario: default
             role: ""
           - scenario: default
+            role: base
+          - scenario: default
             role: openclaw-config
           - scenario: default
+            role: openclaw-harden
+          - scenario: default
+            role: reverse-proxy
+          - scenario: default
             role: maintenance
+          - scenario: default
+            role: monitoring
     steps:
       - name: Checkout
         uses: actions/checkout@v6
