@@ -83,7 +83,7 @@ docker exec $(docker ps -q -f "name=openclaw") openclaw security audit --deep
 docker exec $(docker ps -q -f "name=openclaw") openclaw sandbox explain
 ```
 
-Defense-in-depth: socket proxy, egress whitelist (Smokescreen), `openclaw-net` internal bridge, `capDrop=["ALL"]` on sandboxes, 13 dangerous tools blocked, file-based secret passing, UFW + fail2ban, Cloudflare-only ingress.
+Defense-in-depth: socket proxy, egress whitelist (Smokescreen), `openclaw-net` internal bridge, `cap_drop: ["ALL"]` on all infrastructure containers and sandboxes, `no-new-privileges` enforced at daemon and container level, 13 dangerous tools blocked, file-based secret passing, SSH hardened (no root, no forwarding, deploy user only), UFW + fail2ban, Cloudflare-only ingress.
 
 ---
 

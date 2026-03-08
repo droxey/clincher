@@ -33,6 +33,8 @@ services:
     tmpfs:
       - /tmp:size=16M
       - /run:size=8M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -63,6 +65,8 @@ services:
     networks:
       - openclaw-net
       - proxy-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 30s
@@ -107,6 +111,8 @@ services:
       NO_PROXY: openclaw-redis,localhost,127.0.0.1
     networks:
       - openclaw-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -148,6 +154,8 @@ services:
     tmpfs:
       - /tmp:size=16M
       - /run:size=8M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -173,6 +181,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=32M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     command: >

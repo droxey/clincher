@@ -12,6 +12,12 @@ services:
     networks:
       - ingress-net
       - proxy-net
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 networks:

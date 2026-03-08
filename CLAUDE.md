@@ -101,10 +101,12 @@ Defense-in-depth approach:
 1. **Network isolation**: Three bridge networks, `openclaw-net` is `internal: true`
 2. **Egress control**: Smokescreen proxy whitelists only HTTPS to LLM provider domains
 3. **Socket proxy**: Only EXEC, CONTAINERS, IMAGES, INFO, VERSION, PING, EVENTS enabled; all sensitive APIs (BUILD, SECRETS, SWARM, etc.) explicitly denied
-4. **Sandbox hardening**: `capDrop=["ALL"]`, `network=none`, no workspace access
-5. **Tool denials**: 13 dangerous tools blocked at both agent and gateway levels
-6. **Credential handling**: File-based secret passing — never CLI args
-7. **Firewall**: UFW + fail2ban, admin IP whitelist, Cloudflare-only ingress
+4. **Container hardening**: `cap_drop: ["ALL"]` on all infrastructure containers, `no-new-privileges` enforced at daemon and container level
+5. **Sandbox hardening**: `capDrop=["ALL"]`, `network=none`, no workspace access
+6. **Tool denials**: 13 dangerous tools blocked at both agent and gateway levels
+7. **Credential handling**: File-based secret passing — never CLI args
+8. **SSH hardening**: Non-standard port, key-only auth, deploy user only, no forwarding
+9. **Firewall**: UFW + fail2ban, admin IP whitelist, Cloudflare-only ingress
 
 ## README Structure
 

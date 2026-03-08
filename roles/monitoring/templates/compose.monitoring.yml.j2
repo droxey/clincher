@@ -16,6 +16,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=32M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -46,6 +48,8 @@ services:
     networks:
       - openclaw-net
       - proxy-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -71,6 +75,8 @@ services:
       REDIS_ADDR: "openclaw-redis:6379"
     networks:
       - openclaw-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     deploy:

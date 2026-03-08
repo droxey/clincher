@@ -8,6 +8,11 @@ services:
     networks:
       - ingress-net
       - proxy-net
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 networks:

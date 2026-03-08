@@ -1,7 +1,12 @@
 Port {{ ssh_port }}
 PermitRootLogin no
 PasswordAuthentication no
+PermitEmptyPasswords no
 PubkeyAuthentication yes
+AllowUsers {{ deploy_user }}
 MaxAuthTries 3
 ClientAliveInterval 300
 ClientAliveCountMax 2
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no

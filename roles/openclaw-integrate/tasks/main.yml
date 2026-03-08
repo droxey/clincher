@@ -138,11 +138,13 @@
   when: memory_verify.rc != 0
 
 # ── Restart to apply all integration config ───────────────────────────
+# Use docker_compose_v2 module for consistent change detection and FQCN compliance.
 - name: Restart OpenClaw to apply integration config
-  ansible.builtin.command: docker compose restart openclaw
-  args:
-    chdir: "{{ openclaw_base_dir }}"
-  changed_when: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ openclaw_base_dir }}"
+    services:
+      - openclaw
+    state: restarted
 
 - name: Wait for OpenClaw to become healthy after integration restart
   ansible.builtin.command: >

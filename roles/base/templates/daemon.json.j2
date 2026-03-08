@@ -4,8 +4,11 @@
     "max-size": "{{ docker_log_max_size }}",
     "max-file": "{{ docker_log_max_file }}"
   },
+  "log-level": "info",
   "storage-driver": "overlay2",
   "live-restore": true,
+  "no-new-privileges": true,
+  "userland-proxy": false,
   "default-ulimits": {
     "nofile": { "Name": "nofile", "Soft": 65536, "Hard": 65536 }
   },
