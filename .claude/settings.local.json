@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(make help:*)"
     ]
   },
   "outputStyle": "Explanatory"
