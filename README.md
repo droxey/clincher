@@ -1658,7 +1658,7 @@ Create a Compose override file for Caddy (keeps the base `docker-compose.yml` cl
 cat > /opt/openclaw/compose.caddy.yml << 'EOF'
 services:
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.8.4-alpine
     container_name: openclaw-caddy
     ports:
       - "80:80"
@@ -1668,13 +1668,23 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks:
+      - ingress-net
       - proxy-net
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 networks:
   proxy-net:
     external: true
     name: openclaw_proxy-net
+  ingress-net:
+    external: true
+    name: openclaw_ingress-net
 
 volumes:
   caddy-data:
@@ -1700,13 +1710,22 @@ services:
     environment:
       TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
     networks:
+      - ingress-net
       - proxy-net
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 networks:
   proxy-net:
     external: true
     name: openclaw_proxy-net
+  ingress-net:
+    external: true
+    name: openclaw_ingress-net
 EOF
 
 # Store tunnel token in .env (not in the compose file)
@@ -2415,10 +2434,12 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=32M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "promtool", "check", "healthy"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -2445,6 +2466,8 @@ services:
     networks:
       - openclaw-net
       - proxy-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -2470,6 +2493,8 @@ services:
       REDIS_ADDR: "openclaw-redis:6379"
     networks:
       - openclaw-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -2835,7 +2860,7 @@ docker pull ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
 cd /opt/openclaw && docker compose build openclaw-egress
 docker pull ghcr.io/berriai/litellm:main-v1.81.3-stable
 docker pull redis/redis-stack-server:7.4.0-v3
-docker pull caddy:2-alpine    # if using Caddy
+docker pull caddy:2.8.4-alpine    # if using Caddy
 ```
 
 4. Sync encrypted backups to the standby server nightly. Add to the end of the primary's `backup.sh`, inside the `flock` block:
@@ -3115,7 +3140,7 @@ exit
 docker compose restart openclaw
 ```
 
-Update system tuning for higher connection counts:
+Update system tuning for higher connection counts (these values override the defaults from Step 1 — `inotify.max_user_instances` 512→1024, `somaxconn` 1024→4096, and adds `tcp_max_syn_backlog`):
 
 ```bash
 cat > /etc/sysctl.d/99-openclaw.conf << 'EOF'
@@ -3128,6 +3153,8 @@ EOF
 
 sysctl --system
 ```
+
+> **Note:** If using Ansible, update `inotify_max_instances` and `somaxconn` in `group_vars/all/vars.yml` and add `tcp_max_syn_backlog` to the sysctl template instead of editing files directly.
 
 #### 14.2 Phase 2 — Tune Cost Controls and Externalize Backups
 
@@ -3237,6 +3264,8 @@ services:
     networks:
       - openclaw-net
       - proxy-net
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 30s
