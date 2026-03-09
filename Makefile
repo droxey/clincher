@@ -1,10 +1,18 @@
-.PHONY: lint test deploy verify check caprover-deploy caprover-verify help
+.PHONY: lint test role-tests deploy verify check caprover-deploy caprover-verify help
 
 lint:                          ## Run all linters (yamllint + ansible-lint + syntax check)
 	yamllint . && ansible-lint && ansible-playbook playbook.yml --syntax-check && ansible-playbook caprover-playbook.yml --syntax-check
 
-test:                          ## Run molecule tests
-	molecule test
+test:                          ## Run all Molecule tests (project, CapRover, and role-level)
+	molecule test -s default && molecule test -s caprover && $(MAKE) role-tests
+
+role-tests:                    ## Run Molecule tests for template-bearing roles
+	cd roles/base && molecule test
+	cd roles/openclaw-config && molecule test
+	cd roles/openclaw-harden && molecule test
+	cd roles/reverse-proxy && molecule test
+	cd roles/maintenance && molecule test
+	cd roles/monitoring && molecule test
 
 deploy:                        ## Deploy OpenClaw to target server
 	ansible-playbook playbook.yml -i inventory/hosts.yml --ask-vault-pass

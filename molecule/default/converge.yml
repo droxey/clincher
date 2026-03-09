@@ -1,21 +1,21 @@
 ---
-# Project-level converge: validates variable handling, secret generation,
+# Project-level converge: validates variable handling, required secrets,
 # and pre-flight assertions with test values that pass validation.
-- name: Test variable validation and secret generation
+- name: Test variable validation and required secrets
   hosts: localhost
   connection: local
   gather_facts: true
 
   vars:
-    # Provide valid test values so assertions pass
+    # Provide valid non-production test fixtures so assertions pass
     anthropic_api_key: "sk-ant-test-key-for-molecule"
     voyage_api_key: "pa-test-key-for-molecule"
     admin_ip: "203.0.113.10"
     domain: "test.example.com"
     reverse_proxy: "caddy"
-    litellm_master_key: ""
-    gateway_token: ""
-    backup_encryption_key: ""
+    litellm_master_key: "4b9c6e0d3f8a1c257e4d9b6a0f3c8e1d52a7f4c9b6d3e0a18f2c7b4d9e6a1c35"
+    gateway_token: "8d3a6f1c4e9b2d7a05c8e1f64b3d9a2c7e4f1b8d5a0c6e39f2d7b4c1a8e5f0d6"
+    backup_encryption_key: "c7e4a1d98f3b6c0e52d9a4f1c8b3e6d07a2c5f8e1b4d9a36c0f7e2b5d8a1c4e9"
     deploy_user: deploy
     ssh_port: 9922
     local_ssh_key_path: "/tmp/molecule-test-key"
@@ -60,27 +60,11 @@
           - domain != 'openclaw.yourdomain.com'
         fail_msg: "domain must be set to your actual domain in vars.yml"
 
-    # ── Secret generation (mirrors playbook.yml pre_tasks) ────────────
-    - name: Generate LiteLLM master key
-      ansible.builtin.set_fact:
-        litellm_master_key: "{{ lookup('ansible.builtin.password', '/dev/null chars=hexdigits length=64') }}"
-      when: litellm_master_key | default('') | length == 0
-
-    - name: Generate gateway token
-      ansible.builtin.set_fact:
-        gateway_token: "{{ lookup('ansible.builtin.password', '/dev/null chars=hexdigits length=64') }}"
-      when: gateway_token | default('') | length == 0
-
-    - name: Generate backup encryption key
-      ansible.builtin.set_fact:
-        backup_encryption_key: "{{ lookup('ansible.builtin.password', '/dev/null chars=hexdigits length=64') }}"
-      when: backup_encryption_key | default('') | length == 0
-
-    # ── Verify secrets were generated ─────────────────────────────────
-    - name: Verify all secrets are populated
+    # ── Required internal secrets (mirrors playbook.yml pre_tasks) ─────
+    - name: Verify all required internal secrets are populated
       ansible.builtin.assert:
         that:
           - litellm_master_key | length == 64
           - gateway_token | length == 64
           - backup_encryption_key | length == 64
-        fail_msg: "Secret generation failed — one or more keys are empty or wrong length"
+        fail_msg: "Required internal secrets must be pre-generated in vault.yml as 64-char hex strings"

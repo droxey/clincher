@@ -44,7 +44,7 @@ One Ansible playbook handles everything — idempotently and safely re-runnable.
 # 1. Clone and configure
 git clone https://github.com/droxey/clincher.git && cd clincher
 cp group_vars/all/vault.yml.example group_vars/all/vault.yml
-$EDITOR group_vars/all/vault.yml          # add API keys + Telegram token
+$EDITOR group_vars/all/vault.yml          # add API keys, Telegram token, and 3 pre-generated internal secrets
 ansible-vault encrypt group_vars/all/vault.yml
 
 # 2. Point at your server
@@ -95,7 +95,7 @@ make check
 | Command | What It Checks |
 |---------|----------------|
 | `make lint` | YAML syntax (`yamllint`), Ansible best practices (`ansible-lint` production profile), playbook parsing (`--syntax-check`) |
-| `make test` | Project-level variable validation and secret generation via Molecule |
+| `make test` | All Molecule scenarios: project-level, CapRover, and 6 role-level template suites |
 | `make check` | Both of the above — identical to what CI runs on every push and PR |
 
 ### Run Individual Role Tests
@@ -128,7 +128,7 @@ Every push and PR triggers three jobs in GitHub Actions:
 
 1. **Lint** — `yamllint` + `ansible-lint` (production profile, strict mode)
 2. **Syntax** — `ansible-playbook --syntax-check` on both playbooks
-3. **Molecule** — 7 parallel test scenarios (1 project-level + 6 role-level)
+3. **Molecule** — 8 parallel test scenarios (2 project-level + 6 role-level)
 
 All three must pass before merge. The same checks run locally via `make check`.
 
@@ -202,14 +202,14 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
 
 ## Automated Deployment (Ansible)
 
-The `ansible/` directory contains a playbook that automates Steps 1-13 of this guide. One `ansible-playbook` run takes a fresh Ubuntu 24.04 VPS through SSH hardening, firewall, Docker, all five containers, gateway hardening, channel integration, reverse proxy, backups, and monitoring.
+This repository contains an Ansible playbook that automates Steps 1-13 of this guide. One `ansible-playbook` run takes a fresh Ubuntu 24.04 VPS through SSH hardening, firewall, Docker, all five containers, gateway hardening, channel integration, reverse proxy, backups, and monitoring.
 
 ### Prerequisites
 
 On your **local machine** (the control node):
 
 ```bash
-apt install python3 python3-pip ansible-core
+sudo apt install python3 python3-pip ansible-core
 
 # Install Ansible (2.16+)
 pip install ansible
@@ -219,13 +219,17 @@ cd clincher
 ansible-galaxy collection install -r requirements.yml
 ```
 
+Install `sshpass` only if the first bootstrap run will use `--ask-pass` or `ansible_password`; key-based deploys do not need it:
+
+```bash
+sudo apt install sshpass
+```
+
 The **target server** needs only SSH access and Python 3 (Ubuntu 24.04 includes both).
 
 ### Quick Start
 
 ```bash
-cd ansible
-
 # 1. Configure your server IP
 #    Edit inventory/hosts.yml — set ansible_host to your server IP
 
@@ -234,14 +238,16 @@ cd ansible
 
 # 3. Create and encrypt your secrets vault
 cp group_vars/all/vault.yml.example group_vars/all/vault.yml
-#    Edit vault.yml — add API keys, Telegram bot token
+#    Edit vault.yml — add API keys, Telegram bot token, and pre-generated internal secrets
 ansible-vault encrypt group_vars/all/vault.yml
 
 # 4. Deploy everything
 ansible-playbook playbook.yml --ask-vault-pass
 ```
 
-Tokens and encryption keys left empty in `vault.yml` are auto-generated on first run.
+Generate `litellm_master_key`, `gateway_token`, and `backup_encryption_key` before the first run with `openssl rand -hex 32` (32 bytes = 64 hex characters). Run the command three separate times and paste each full 64-character output into its matching `vault.yml` field.
+
+Keep those three values stable across re-runs so auth tokens and encrypted backups remain valid.
 
 ### What Gets Deployed
 
@@ -310,10 +316,10 @@ anthropic_api_key: "sk-ant-..."        # From console.anthropic.com
 voyage_api_key: "pa-..."              # From dash.voyageai.com
 telegram_bot_token: "123:ABC..."       # From @BotFather
 
-# ── Auto-Generated (leave empty) ─────────────────────
-litellm_master_key: ""                 # Random 64-char hex
-gateway_token: ""                      # Random 64-char hex
-backup_encryption_key: ""              # Random 64-char hex
+# ── Required Internal Secrets (pre-generate and keep stable) ─────────────
+litellm_master_key: "0123...abcd"      # openssl rand -hex 32
+gateway_token: "0123...abcd"           # openssl rand -hex 32
+backup_encryption_key: "0123...abcd"   # openssl rand -hex 32
 
 # ── Optional ──────────────────────────────────────────
 # tunnel_token: "..."                  # If reverse_proxy: tunnel
@@ -323,7 +329,7 @@ backup_encryption_key: ""              # Random 64-char hex
 ### Directory Structure
 
 ```
-ansible/
+clincher/
 ├── ansible.cfg                        # SSH pipelining, YAML output, retry config
 ├── requirements.yml                   # Galaxy collections (community.docker, community.general)
 ├── inventory/hosts.yml                # Target server IP and SSH config

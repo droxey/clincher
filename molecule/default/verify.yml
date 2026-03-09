@@ -1,5 +1,5 @@
 ---
-# Verify that variable validation and secret generation work correctly
+# Verify that variable validation and required-secret checks work correctly
 - name: Verify variable validation
   hosts: localhost
   connection: local
@@ -9,4 +9,4 @@
     - name: Confirm converge completed without errors
       ansible.builtin.assert:
         that: true
-        success_msg: "Project-level validation and secret generation passed"
+        success_msg: "Project-level validation and required-secret checks passed"
