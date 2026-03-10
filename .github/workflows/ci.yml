@@ -121,7 +121,7 @@ jobs:
   docker:
     name: Docker Build and Push
     runs-on: ubuntu-latest
-    needs: [lint, syntax]
+    needs: [lint, syntax, molecule]
     if: vars.DOCKERHUB_USERNAME != ''
     steps:
       - name: Checkout
