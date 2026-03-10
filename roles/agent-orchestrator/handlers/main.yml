@@ -1,4 +1,17 @@
 ---
+- name: Build and link agent-orchestrator
+  ansible.builtin.shell: |
+    set -euo pipefail
+    pnpm install
+    pnpm build
+    pnpm link --global
+  args:
+    chdir: "{{ agent_orchestrator_install_dir }}/repo"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ deploy_user }}"
+  changed_when: true
+
 - name: Restart agent-orchestrator
   ansible.builtin.systemd:
     name: agent-orchestrator

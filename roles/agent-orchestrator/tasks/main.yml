@@ -97,35 +97,10 @@
   until: ao_clone is not failed
   become: true
   become_user: "{{ deploy_user }}"
+  notify: Build and link agent-orchestrator
 
-- name: Install dependencies and build
-  ansible.builtin.command: pnpm install
-  args:
-    chdir: "{{ agent_orchestrator_install_dir }}/repo"
-  become: true
-  become_user: "{{ deploy_user }}"
-  when: ao_clone.changed
-  register: ao_install
-  changed_when: ao_install.rc == 0
-
-- name: Build agent-orchestrator
-  ansible.builtin.command: pnpm build
-  args:
-    chdir: "{{ agent_orchestrator_install_dir }}/repo"
-  become: true
-  become_user: "{{ deploy_user }}"
-  when: ao_clone.changed
-  register: ao_build
-  changed_when: ao_build.rc == 0
-
-- name: Link ao CLI globally
-  ansible.builtin.command: pnpm link --global
-  args:
-    chdir: "{{ agent_orchestrator_install_dir }}/repo"
-  become: true
-  become_user: "{{ deploy_user }}"
-  when: ao_clone.changed
-  changed_when: ao_clone.changed
+- name: Flush handlers to build before service start
+  ansible.builtin.meta: flush_handlers
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
