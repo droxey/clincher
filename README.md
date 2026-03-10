@@ -217,6 +217,7 @@ Three bridge networks enforce least-privilege communication. `openclaw-net` is *
   - [Step 9: Reverse Proxy Setup](#step-9-reverse-proxy-setup)
   - [Step 10: Verification](#step-10-verification)
   - [Step 11: Maintenance](#step-11-maintenance)
+  - [Step 11.5: Convenience Features](#step-115-convenience-features)
   - [Step 12: Troubleshooting](#step-12-troubleshooting)
   - [Step 13: High Availability and Disaster Recovery](#step-13-high-availability-and-disaster-recovery)
   - [Step 14: Scaling](#step-14-scaling)
@@ -286,6 +287,7 @@ Keep those three values stable across re-runs so auth tokens and encrypted backu
 | `reverse-proxy` | 9 | Caddy (default), Cloudflare Tunnel, or Tailscale Serve |
 | `verify` | 10 | Security audit, container health, egress tests, config spot-checks |
 | `maintenance` | 11, 13 | Backup/rotation/watchdog scripts, cron jobs, unattended upgrades |
+| `convenience` | 11.5 | Shell aliases (`oc-*` commands), shared uploads dir, optional Filebrowser web file manager |
 | `monitoring` | 13.2.1 | Prometheus + Grafana + Redis exporter (optional, `monitoring_enabled: true`) |
 
 ### Run Specific Steps
@@ -306,7 +308,7 @@ ansible-playbook playbook.yml --ask-vault-pass --check --diff
 ansible-playbook playbook.yml --ask-vault-pass -e monitoring_enabled=true
 ```
 
-Available tags: `base`, `config`, `deploy`, `harden`, `agents`, `integrate`, `proxy`, `verify`, `maintenance`, `monitoring`.
+Available tags: `base`, `config`, `deploy`, `harden`, `agents`, `integrate`, `convenience`, `proxy`, `verify`, `maintenance`, `monitoring`.
 
 ### Key Configuration (vars.yml)
 
@@ -320,6 +322,7 @@ reverse_proxy: "caddy"                 # caddy | tunnel | tailscale
 
 # ── Optional Features ─────────────────────────────────
 monitoring_enabled: false              # true → deploys Prometheus + Grafana
+filebrowser_enabled: false             # true → deploys web file manager at /files/
 tailscale_enabled: false               # true → replaces public SSH with Tailscale
 disable_ipv6: false                    # true → disables IPv6 system-wide
 telegram_enabled: true                 # false → skips Telegram channel setup
@@ -368,6 +371,7 @@ clincher/
     ├── openclaw-harden/               # 30+ config set commands, SOUL.md, security audit
     ├── agency-agents/                 # Clone and deploy agency-agents prompt library
     ├── openclaw-integrate/            # Model proxy, Telegram, memory index
+    ├── convenience/                   # Shell aliases, shared uploads, Filebrowser (optional)
     ├── reverse-proxy/                 # Caddy / Tunnel / Tailscale (conditional)
     ├── verify/                        # Post-deploy health and security checks
     ├── maintenance/                   # Scripts, cron, unattended-upgrades
@@ -2195,6 +2199,174 @@ groups:
         annotations:
           summary: "LLM spend has exceeded 80% of budget"
 ```
+
+### Step 11.5: Convenience Features
+
+The Ansible playbook deploys these automatically. For manual installs, follow below.
+
+#### Shell Aliases
+
+Deploy operator shortcuts so common commands are a quick `oc-*` away:
+
+```bash
+cat > /etc/profile.d/openclaw.sh << 'EOF'
+OC_DIR="/opt/openclaw"
+OC_COMPOSE="docker compose -f ${OC_DIR}/docker-compose.yml"
+
+# Status & health
+alias oc-status='${OC_COMPOSE} ps && echo && docker stats --no-stream'
+alias oc-doctor='docker exec openclaw openclaw doctor'
+alias oc-audit='docker exec openclaw openclaw security audit --deep'
+alias oc-health='${OC_COMPOSE} ps --format "table {{.Name}}\t{{.Status}}\t{{.Health}}"'
+
+# Logs
+alias oc-logs='${OC_COMPOSE} logs --tail 100'
+alias oc-logs-follow='${OC_COMPOSE} logs --tail 50 -f'
+alias oc-logs-gw='${OC_COMPOSE} logs --tail 100 openclaw'
+alias oc-logs-llm='${OC_COMPOSE} logs --tail 100 litellm'
+alias oc-logs-egress='${OC_COMPOSE} logs --tail 100 openclaw-egress'
+
+# Lifecycle
+alias oc-restart='${OC_COMPOSE} restart openclaw && echo "Gateway restarted"'
+alias oc-restart-all='${OC_COMPOSE} restart && echo "All services restarted"'
+alias oc-stop='${OC_COMPOSE} stop'
+alias oc-start='${OC_COMPOSE} start'
+alias oc-shell='docker exec -it openclaw /bin/sh'
+
+# Configuration
+alias oc-config='docker exec openclaw openclaw config'
+alias oc-config-get='docker exec openclaw openclaw config get'
+alias oc-sandbox='docker exec openclaw openclaw sandbox explain'
+
+# Memory & RAG
+alias oc-memory='docker exec openclaw openclaw memory search'
+alias oc-memory-index='docker exec openclaw openclaw memory index --verify'
+
+# Maintenance
+alias oc-backup='/opt/openclaw/monitoring/backup.sh'
+alias oc-watchdog='/opt/openclaw/monitoring/watchdog.sh'
+alias oc-usage='docker exec openclaw openclaw usage cost'
+
+# Resources
+alias oc-disk='df -h /opt/openclaw && echo && du -sh /opt/openclaw/*'
+alias oc-redis='docker exec openclaw-redis redis-cli'
+
+# Uploads
+alias oc-uploads='ls -lah /opt/openclaw/uploads/'
+EOF
+
+chmod 644 /etc/profile.d/openclaw.sh
+```
+
+Log out and back in (or `source /etc/profile.d/openclaw.sh`) to activate. Quick reference:
+
+| Command | What It Does |
+|---------|-------------|
+| `oc-status` | Container status + live resource usage |
+| `oc-doctor` | Built-in health diagnostic |
+| `oc-audit` | Deep security audit |
+| `oc-logs` | Last 100 lines from all services |
+| `oc-logs-follow` | Tail logs in real-time |
+| `oc-restart` | Restart gateway only |
+| `oc-shell` | Interactive shell inside the gateway container |
+| `oc-backup` | Run backup immediately |
+| `oc-usage` | Current LLM spend |
+| `oc-disk` | Disk usage breakdown |
+| `oc-uploads` | List shared upload files |
+
+#### Shared Uploads Directory
+
+Create a shared directory that both you and the OpenClaw agent can access:
+
+```bash
+mkdir -p /opt/openclaw/uploads
+```
+
+The Compose file already bind-mounts this into the container at `/root/uploads`. Drop files here via SCP/SFTP, and the agent can read them. The agent can also write output files here for you to download.
+
+```bash
+# Upload a file from your local machine
+scp -P 9922 report.pdf deploy@<SERVER_IP>:/opt/openclaw/uploads/
+
+# Download agent output
+scp -P 9922 deploy@<SERVER_IP>:/opt/openclaw/uploads/analysis.md ./
+```
+
+#### Optional: Web File Manager (Filebrowser)
+
+For a browser-based file manager at `https://<domain>/files/`, deploy [Filebrowser](https://filebrowser.org):
+
+```bash
+# Create config
+mkdir -p /opt/openclaw/config/filebrowser
+cat > /opt/openclaw/config/filebrowser/filebrowser.json << 'EOF'
+{
+  "port": 8080,
+  "baseURL": "/files",
+  "address": "0.0.0.0",
+  "log": "stdout",
+  "database": "/database/filebrowser.db",
+  "root": "/srv"
+}
+EOF
+
+# Create compose overlay
+cat > /opt/openclaw/compose.convenience.yml << 'EOF'
+services:
+  filebrowser:
+    image: filebrowser/filebrowser:v2.32.0
+    container_name: openclaw-filebrowser
+    volumes:
+      - /opt/openclaw/uploads:/srv
+      - ./config/filebrowser/filebrowser.json:/.filebrowser.json:ro
+      - filebrowser-data:/database
+    networks:
+      - proxy-net
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
+    restart: unless-stopped
+
+networks:
+  proxy-net:
+    external: true
+    name: openclaw_proxy-net
+
+volumes:
+  filebrowser-data:
+EOF
+```
+
+Add the route to your Caddyfile (before the default `reverse_proxy` line):
+
+```
+handle_path /files/* {
+    reverse_proxy openclaw-filebrowser:8080
+}
+```
+
+Start the stack with the overlay:
+
+```bash
+cd /opt/openclaw
+docker compose -f docker-compose.yml -f compose.convenience.yml -f compose.caddy.yml up -d
+```
+
+Default credentials are `admin` / `admin` — change the password on first login.
+
+> **Ansible shortcut**: Set `filebrowser_enabled: true` in `vars.yml` and re-run the playbook. The `convenience` role handles config, compose overlay, Caddyfile route, and stack restart automatically.
 
 ### Step 12: Troubleshooting
 
