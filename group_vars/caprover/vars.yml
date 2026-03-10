@@ -113,9 +113,9 @@ openclaw_server_domain: openclaw.yourdomain.com
 openclaw_litellm_port: 4000
 openclaw_metrics_port: 9090
 
-# --- External monitoring (refactor) ---
-# When true, the main OpenClaw playbook skips local monitoring
-# and configures metric endpoints for external scraping
+# --- External monitoring ---
+# Monitoring services always run on this separate VPS, never on the OpenClaw host.
+# Set these URLs after deploying Prometheus, Grafana, and Uptime Kuma.
 external_monitoring_enabled: false
 external_monitoring_prometheus_url: ""
 external_monitoring_grafana_url: ""

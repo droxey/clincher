@@ -28,7 +28,7 @@ caprover-verify:               ## Verify CapRover swarm deployment
 	ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml --tags verify --ask-vault-pass
 
 caprover-check:                ## Lint + test CapRover monitoring config only
-	yamllint caprover-playbook.yml roles/monitoring/ && ansible-lint caprover-playbook.yml roles/monitoring/ && ansible-playbook caprover-playbook.yml --syntax-check && molecule test -s caprover && cd roles/monitoring && molecule test
+	yamllint caprover-playbook.yml && ansible-lint caprover-playbook.yml && ansible-playbook caprover-playbook.yml --syntax-check && molecule test -s caprover
 
 scan:                          ## Scan for secret leaks (requires gitleaks)
 	gitleaks detect --source . -v

@@ -26,9 +26,6 @@ redis_version: "7.4.0-v3"
 # Pin Caddy to a specific patch release — "2-alpine" is a floating tag.
 caddy_version: "2.8.4-alpine"
 cloudflared_version: "2026.2.0"
-prometheus_version: "v3.2.1"
-grafana_version: "11.5.2"
-redis_exporter_version: "v1.67.0"
 
 # ── Host Package Versions (pinned) ────────────────────────────────────
 # Pin to the exact Ubuntu package epoch:version string. To find the current
@@ -219,14 +216,11 @@ memory_model: "voyage-3-large"
 # Options: caddy | tunnel | tailscale
 reverse_proxy: "caddy"
 
-# ── Monitoring (Optional Prometheus + Grafana) ───────────────────────
-monitoring_enabled: false
-
-# ── External Monitoring (CapRover Swarm) ─────────────────────────────
-# When true, skips local Prometheus/Grafana and exposes metrics for
-# external scraping by a CapRover-hosted monitoring stack.
-# Deploy the external stack: ansible-playbook caprover-playbook.yml
-external_monitoring_enabled: false
+# ── External Monitoring (Separate VPS) ────────────────────────────────
+# Monitoring services (Prometheus, Grafana, Uptime Kuma) run on a
+# separate VPS — never on the OpenClaw host. Deploy the external
+# stack with: ansible-playbook caprover-playbook.yml
+# See §13.2.1 in README.md for setup details.
 # external_monitoring_prometheus_url: "https://prometheus.example.dev"
 # external_monitoring_grafana_url: "https://grafana.example.dev"
 # external_monitoring_uptimekuma_url: "https://uptime-kuma.example.dev"

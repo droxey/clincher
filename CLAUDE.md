@@ -45,8 +45,7 @@ clincher/
     ├── openclaw-integrate/      # Steps 6-8: API, Telegram, memory
     ├── reverse-proxy/           # Step 9: Caddy/Tunnel/Tailscale
     ├── verify/                  # Step 10: post-deploy verification
-    ├── maintenance/             # Steps 11+13: backups, watchdog, cron
-    └── monitoring/              # Step 13.2.1: Prometheus + Grafana (optional)
+    └── maintenance/             # Steps 11+13: backups, watchdog, cron
 ```
 
 Smokescreen egress proxy built from source via multi-stage Dockerfile. Docker Compose specs and scripts are embedded in `README.md`. Ansible files provide Jinja2-templated equivalents for automated deployment.
@@ -68,10 +67,10 @@ graph TB
         EGRESS["🚪 openclaw-egress<br/>Smokescreen egress whitelist"]
     end
 
-    subgraph MON ["📊 monitoring · optional · external"]
-        PROM["📈 prometheus<br/>metrics · 14d retention"]
+    subgraph MONVPS ["📊 monitoring · separate VPS"]
+        PROM["📈 prometheus<br/>metrics · 30d retention"]
         GRAF["📉 grafana<br/>dashboards + alerts"]
-        REXP["📡 redis-exporter<br/>Redis metrics"]
+        UKUMA["🟢 uptime-kuma<br/>external health checks"]
     end
 
     SOCK["🔌 /var/run/docker.sock<br/>read-only"]
@@ -79,16 +78,14 @@ graph TB
 
     CF -->|HTTPS| PROXY
     PROXY -->|proxy-net| GW
-    PROXY -.->|proxy-net| GRAF
     GW --> DP
     GW --> LLM
     GW --> REDIS
     LLM --> EGRESS
     DP --> SOCK
     EGRESS -->|egress-net| LLMAPI
-    PROM -.->|openclaw-net| LLM
-    PROM -.->|openclaw-net| REXP
-    REXP -.->|openclaw-net| REDIS
+    PROM -.->|"HTTPS scrape<br/>(cross-VPS)"| LLM
+    UKUMA -.->|"HTTPS health<br/>(cross-VPS)"| CF
     GRAF -.-> PROM
 
     classDef external fill:#f9f0ff,stroke:#9b59b6,stroke-width:2px,color:#333
@@ -100,11 +97,11 @@ graph TB
     class CF,LLMAPI external
     class PROXY proxy
     class GW,DP,LLM,REDIS,EGRESS core
-    class PROM,GRAF,REXP monitor
+    class PROM,GRAF,UKUMA monitor
     class SOCK infra
 ```
 
-Three bridge networks enforce least-privilege. `openclaw-net` is `internal: true` — no direct internet. Egress proxy bridges internal/external for whitelisted LLM calls only. Monitoring services run outside the internal network and attach to `openclaw-net` only to scrape metrics.
+Three bridge networks enforce least-privilege. `openclaw-net` is `internal: true` — no direct internet. Egress proxy bridges internal/external for whitelisted LLM calls only. Monitoring services (Prometheus, Grafana, Uptime Kuma) run on a separate VPS and scrape the OpenClaw host remotely over HTTPS.
 
 ### Services
 
@@ -115,15 +112,14 @@ Three bridge networks enforce least-privilege. `openclaw-net` is `internal: true
 | `litellm` | `ghcr.io/berriai/litellm:main-v1.81.3-stable` | LLM API proxy — routing, cost controls, caching | `openclaw-net` |
 | `openclaw-egress` | Built from [stripe/smokescreen](https://github.com/stripe/smokescreen) | Egress whitelist proxy for LLM API calls | `openclaw-net` + `egress-net` |
 | `redis` | `redis/redis-stack-server:7.4.0-v3` | Semantic cache (RediSearch module) | `openclaw-net` |
-| `prometheus` *(optional)* | `prom/prometheus:v3.2.1` | Time-series metrics, 14d retention | `openclaw-net` |
-| `grafana` *(optional)* | `grafana/grafana-oss:11.5.2` | Dashboards + alerts | `openclaw-net` + `proxy-net` |
-| `redis-exporter` *(optional)* | `oliver006/redis_exporter:v1.67.0` | Redis metrics for Prometheus | `openclaw-net` |
+
+Monitoring services (Prometheus, Grafana, Uptime Kuma) run on a **separate VPS** — deploy via `ansible-playbook caprover-playbook.yml`.
 
 ### Networks
 
-- **`openclaw-net`**: Internal bridge — no internet access. Core services live here; monitoring services attach to scrape metrics.
+- **`openclaw-net`**: Internal bridge — no internet access. Core services live here.
 - **`egress-net`**: Bridges egress proxy to internet for whitelisted LLM API calls.
-- **`proxy-net`**: Connects reverse proxy to the OpenClaw gateway and Grafana.
+- **`proxy-net`**: Connects reverse proxy to the OpenClaw gateway.
 
 ### Security Model
 

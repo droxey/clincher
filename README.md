@@ -109,7 +109,6 @@ cd roles/openclaw-config && molecule test    # Docker Compose, .env, Smokescreen
 cd roles/openclaw-harden && molecule test    # SOUL.md agent guidelines
 cd roles/reverse-proxy && molecule test      # Caddyfile, Caddy compose, Tunnel compose
 cd roles/maintenance && molecule test        # Backup, watchdog, token rotation scripts
-cd roles/monitoring && molecule test         # Prometheus config, monitoring compose
 ```
 
 ### What Molecule Tests Cover
@@ -119,7 +118,7 @@ Every Molecule scenario uses a **delegated driver with local connection** — no
 - **File creation** — all expected config files are generated
 - **Content correctness** — rendered output contains expected services, domains, keys, and settings
 - **Permissions** — secret files (`.env`, encryption keys) have mode `0600`; scripts have `0700`
-- **Conditional logic** — Jinja2 conditionals (e.g., `disable_ipv6`, `monitoring_enabled`) produce the right output
+- **Conditional logic** — Jinja2 conditionals (e.g., `disable_ipv6`) produce the right output
 - **Variable validation** — the playbook's `pre_tasks` assertions catch missing or placeholder values before any deployment step runs
 
 ### CI Pipeline Overview
@@ -163,10 +162,10 @@ graph TB
         EGRESS["🚪 openclaw-egress<br/>Smokescreen egress whitelist"]
     end
 
-    subgraph MON ["📊 monitoring · optional · external"]
-        PROM["📈 prometheus<br/>metrics · 14d retention"]
+    subgraph MONVPS ["📊 monitoring · separate VPS"]
+        PROM["📈 prometheus<br/>metrics · 30d retention"]
         GRAF["📉 grafana<br/>dashboards + alerts"]
-        REXP["📡 redis-exporter<br/>Redis metrics"]
+        UKUMA["🟢 uptime-kuma<br/>external health checks"]
     end
 
     SOCK["🔌 /var/run/docker.sock<br/>read-only"]
@@ -174,16 +173,14 @@ graph TB
 
     CF -->|HTTPS| PROXY
     PROXY -->|proxy-net| GW
-    PROXY -.->|proxy-net| GRAF
     GW --> DP
     GW --> LLM
     GW --> REDIS
     LLM --> EGRESS
     DP --> SOCK
     EGRESS -->|egress-net| LLMAPI
-    PROM -.->|openclaw-net| LLM
-    PROM -.->|openclaw-net| REXP
-    REXP -.->|openclaw-net| REDIS
+    PROM -.->|"HTTPS scrape<br/>(cross-VPS)"| LLM
+    UKUMA -.->|"HTTPS health<br/>(cross-VPS)"| CF
     GRAF -.-> PROM
 
     classDef external fill:#f9f0ff,stroke:#9b59b6,stroke-width:2px,color:#333
@@ -195,11 +192,11 @@ graph TB
     class CF,LLMAPI external
     class PROXY proxy
     class GW,DP,LLM,REDIS,EGRESS core
-    class PROM,GRAF,REXP monitor
+    class PROM,GRAF,UKUMA monitor
     class SOCK infra
 ```
 
-Three bridge networks enforce least-privilege communication. `openclaw-net` is **internal** — no internet access. The egress proxy bridges internal and external via `egress-net`. The reverse proxy reaches the gateway and Grafana via `proxy-net`. Monitoring services run outside the internal network and attach to `openclaw-net` only to scrape metrics; Grafana is exposed through the reverse proxy. Dashed lines indicate optional monitoring connections. Traffic never leaves the host between services, so no IPSEC encryption is needed.
+Three bridge networks enforce least-privilege communication. `openclaw-net` is **internal** — no internet access. The egress proxy bridges internal and external via `egress-net`. The reverse proxy reaches the gateway via `proxy-net`. Monitoring services (Prometheus, Grafana, Uptime Kuma) run on a **separate VPS** and scrape the OpenClaw host remotely over HTTPS. Dashed lines indicate monitoring connections that cross VPS boundaries. Traffic between co-located services never leaves the host, so no IPSEC encryption is needed.
 
 ## Table of Contents
 
@@ -303,9 +300,6 @@ ansible-playbook playbook.yml --ask-vault-pass --tags proxy
 
 # Dry run — show what would change without modifying anything
 ansible-playbook playbook.yml --ask-vault-pass --check --diff
-
-# Deploy with monitoring stack enabled
-ansible-playbook playbook.yml --ask-vault-pass -e monitoring_enabled=true
 ```
 
 Available tags: `base`, `config`, `deploy`, `harden`, `agents`, `integrate`, `convenience`, `proxy`, `verify`, `maintenance`, `monitoring`.
@@ -350,7 +344,6 @@ backup_encryption_key: "0123...abcd"   # openssl rand -hex 32
 
 # ── Optional ──────────────────────────────────────────
 # tunnel_token: "..."                  # If reverse_proxy: tunnel
-# grafana_admin_password: ""           # If monitoring_enabled: true
 ```
 
 ### Directory Structure
@@ -374,8 +367,7 @@ clincher/
     ├── convenience/                   # Shell aliases, shared uploads, Filebrowser (optional)
     ├── reverse-proxy/                 # Caddy / Tunnel / Tailscale (conditional)
     ├── verify/                        # Post-deploy health and security checks
-    ├── maintenance/                   # Scripts, cron, unattended-upgrades
-    └── monitoring/                    # Prometheus + Grafana (optional)
+    └── maintenance/                   # Scripts, cron, unattended-upgrades
 ```
 
 ### Idempotency
@@ -390,7 +382,6 @@ The playbook is safe to re-run. Ansible skips tasks that are already in the desi
 | Obtain Cloudflare Tunnel token | Dashboard-only operation |
 | Generate API keys (Anthropic, Voyage) | Provider dashboard |
 | Run `tailscale up` (first auth) | Requires browser-based device authorization |
-| Configure Grafana data sources + dashboards | One-time UI setup after deploy |
 | Cloudflare Health Check setup (§13.4) | Dashboard configuration |
 | Quarterly DR drills (§13.10) | Intentionally manual — tests human procedures |
 
@@ -781,7 +772,7 @@ litellm_settings:
     supported_call_types:
       - "acompletion"
       - "atext_completion"
-  # Prometheus metrics — scraped by the monitoring stack (compose.monitoring.yml)
+  # Prometheus metrics — scraped by external monitoring (separate VPS)
   service_callbacks: ["prometheus"]
   json_logs: true
   turn_off_message_logging: true  # redact prompt/response content from logs
@@ -1893,8 +1884,7 @@ docker exec openclaw-redis redis-cli dbsize
 # ── Resource Limits (64 GB budget) ──────────────────────────────────
 # Base: 16G openclaw + 2G litellm + 256M proxy + 128M smokescreen + 512M redis = ~19G
 # Sandboxes: 8 × 1G = ~8G peak → total ~27G
-# Monitoring overlay adds ~544M (256M prometheus + 256M grafana + 32M exporter)
-# Remaining ~36G covers: OS page cache, Docker daemon, reverse proxy, growth
+# Remaining ~37G covers: OS page cache, Docker daemon, reverse proxy, growth
 docker stats --no-stream
 
 # ── Network Connectivity ─────────────────────────────────────────────
@@ -2158,7 +2148,7 @@ docker exec openclaw \
 
 #### SLO and Alert Seed Configurations
 
-Define baseline service-level objectives for your deployment. These thresholds feed into the watchdog script (§13.2) and optional Prometheus alerts (§13.2.1):
+Define baseline service-level objectives for your deployment. These thresholds feed into the watchdog script (§13.2) and Prometheus alerts on the monitoring VPS (§13.2.1):
 
 | SLO | Target | Alert Threshold | Where to Monitor |
 |-----|--------|-----------------|------------------|
@@ -2169,10 +2159,10 @@ Define baseline service-level objectives for your deployment. These thresholds f
 | Backup success rate | 100% | Any backup failure | Backup script log |
 | Daily LLM spend | Within budget | > 80% of daily budget by noon | Watchdog spend check (§13.2) |
 
-For deployments using Prometheus (§13.2.1), seed these alert rules:
+For deployments using Prometheus on the monitoring VPS (§13.2.1), seed these alert rules:
 
 ```yaml
-# Add to /opt/openclaw/monitoring/prometheus/alert-rules.yml
+# Add to the Prometheus alert rules on the monitoring VPS
 groups:
   - name: openclaw-slo
     rules:
@@ -2386,7 +2376,7 @@ Default credentials are `admin` / `admin` — change the password on first login
 | High swap usage | `free -h`, `vmstat 1 5` | If swap > 1 GB consistently, reduce `agents.defaults.sandbox.docker.memoryLimit` or lower openclaw memory limit to 3G |
 | Config error after update | `docker exec openclaw openclaw doctor --repair` | Restore from backup: `docker exec openclaw cp /root/.openclaw/config.json.bak /root/.openclaw/config.json` and restart. See Step 5 backup note |
 | Redis unreachable / LiteLLM cache errors | `docker exec openclaw-redis redis-cli ping`, `docker logs openclaw-litellm --tail 50 \| grep -i redis` | Verify redis container is healthy, check `REDIS_HOST` env var in LiteLLM, verify both are on `openclaw-net`. LiteLLM falls back to no-cache if Redis is unavailable — service continues, just without caching |
-| Low cache hit rate | `docker exec openclaw-redis redis-cli dbsize`, check Prometheus `litellm_cache_hit_metric_total` | Normal for first 24 hours. If persistently < 5%, lower `similarity_threshold` from 0.8 to 0.7 in `litellm-config.yaml` and restart LiteLLM |
+| Low cache hit rate | `docker exec openclaw-redis redis-cli dbsize`, check Prometheus `litellm_cache_hit_metric_total` on monitoring VPS | Normal for first 24 hours. If persistently < 5%, lower `similarity_threshold` from 0.8 to 0.7 in `litellm-config.yaml` and restart LiteLLM |
 
 ### Step 13: High Availability and Disaster Recovery
 
@@ -2583,173 +2573,21 @@ Add the watchdog to root's crontab alongside the existing backup and rotation jo
 
 > **Why 5-minute intervals?** Fast enough to catch problems before users report them, slow enough to avoid cron overhead. For tighter monitoring, reduce to `*/2` — but ensure the alert cooldown prevents notification floods.
 
-#### 13.2.1 Optional: Prometheus + Grafana Monitoring Stack
+#### 13.2.1 Prometheus + Grafana Monitoring (Separate VPS)
 
-The watchdog script catches binary states (up/down, healthy/unhealthy). For continuous metrics — request latency, token spend over time, cache hit rates, error percentages — add Prometheus and Grafana as a Compose overlay.
+The watchdog script catches binary states (up/down, healthy/unhealthy). For continuous metrics — request latency, token spend over time, cache hit rates, error percentages — deploy Prometheus and Grafana on a **separate VPS**.
 
-**Resource cost**: ~256 MB RAM total (Prometheus ~128 MB, Grafana ~128 MB). On the Production tier (64 GB), this fits comfortably with no trade-offs. On Starter tier (8 GB), enabling the monitoring stack requires reducing sandbox concurrency.
+> **Why a separate VPS?** Monitoring that runs on the same host it monitors creates a single point of failure — if the host goes down, you lose both the service and its observability. Running monitoring on a dedicated VPS ensures you retain metrics and alerting even during an outage on the OpenClaw host.
 
-Create the Prometheus scrape config:
-
-```bash
-cat > /opt/openclaw/config/prometheus.yml << 'EOF'
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-
-scrape_configs:
-  - job_name: "litellm"
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["openclaw-litellm:4000"]
-    # Scrape only the metrics endpoint — no auth needed for /metrics
-    scrape_interval: 30s
-
-  - job_name: "redis"
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["openclaw-redis-exporter:9121"]
-    scrape_interval: 60s
-EOF
-chmod 644 /opt/openclaw/config/prometheus.yml
-```
-
-Create the Compose overlay:
+Deploy the external monitoring stack using the CapRover playbook:
 
 ```bash
-cat > /opt/openclaw/compose.monitoring.yml << 'EOF'
-services:
-  prometheus:
-    image: prom/prometheus:v3.2.1
-    container_name: openclaw-prometheus
-    volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=14d"
-      - "--storage.tsdb.retention.size=2GB"
-      - "--web.enable-lifecycle"
-    networks:
-      - openclaw-net
-    read_only: true
-    tmpfs:
-      - /tmp:size=32M
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana-oss:11.5.2
-    container_name: openclaw-grafana
-    volumes:
-      - grafana-data:/var/lib/grafana
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
-      GF_SERVER_ROOT_URL: "https://openclaw.yourdomain.com/grafana/"
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-    networks:
-      - openclaw-net
-      - proxy-net
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-    restart: unless-stopped
-
-  redis-exporter:
-    image: oliver006/redis_exporter:v1.67.0
-    container_name: openclaw-redis-exporter
-    environment:
-      REDIS_ADDR: "openclaw-redis:6379"
-    networks:
-      - openclaw-net
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: "0.1"
-          memory: 32M
-    restart: unless-stopped
-
-networks:
-  openclaw-net:
-    external: true
-    name: openclaw_openclaw-net
-  proxy-net:
-    external: true
-    name: openclaw_proxy-net
-
-volumes:
-  prometheus-data:
-  grafana-data:
-EOF
+ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml --ask-vault-pass
 ```
 
-Set the Grafana admin password and deploy:
+The CapRover playbook deploys Prometheus, Grafana, and Uptime Kuma on a separate VPS cluster. Prometheus scrapes the OpenClaw host remotely over HTTPS — no Docker network attachment required.
 
-```bash
-# Generate a strong Grafana password
-echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24)" >> /opt/openclaw/.env
-chmod 600 /opt/openclaw/.env
-
-# Deploy with monitoring overlay
-docker compose -f docker-compose.yml -f compose.monitoring.yml up -d
-```
-
-Add the Grafana route to your Caddyfile (or Cloudflare Tunnel config):
-
-```
-openclaw.yourdomain.com {
-    # Grafana dashboard (behind Grafana's own auth)
-    handle_path /grafana/* {
-        reverse_proxy openclaw-grafana:3000
-    }
-
-    # Default: OpenClaw gateway
-    reverse_proxy openclaw:18789
-}
-```
-
-**Configure the Prometheus data source in Grafana:**
-
-1. Open `https://openclaw.yourdomain.com/grafana/` and log in with the admin password.
-2. Navigate to **Connections → Data Sources → Add data source**.
-3. Select **Prometheus**, set URL to `http://openclaw-prometheus:9090`, click **Save & Test**.
+LiteLLM exposes a `/metrics` endpoint (configured via `service_callbacks: ["prometheus"]` in `litellm-config.yaml`). The external Prometheus instance scrapes this endpoint from the monitoring VPS.
 
 **Key metrics to monitor:**
 
@@ -2760,8 +2598,6 @@ openclaw.yourdomain.com {
 | Cache hit rate | `rate(litellm_cache_hit_metric_total[5m]) / (rate(litellm_cache_hit_metric_total[5m]) + rate(litellm_cache_miss_metric_total[5m]))` | Semantic cache effectiveness |
 | Error rate | `rate(litellm_error_metric_total[5m])` | Failed LLM calls per second |
 | Redis memory | `redis_memory_used_bytes / redis_memory_max_bytes` | Cache memory pressure |
-
-> **Note for smaller servers**: On an 8 GB Starter tier box, enabling the monitoring stack pushes total worst-case memory to ~8.1G. Compensate by reducing concurrent sandboxes: `openclaw config set agents.defaults.sandbox.docker.maxConcurrent 2`. On the Production tier (64 GB), this trade-off is unnecessary.
 
 #### 13.3 Unattended Security Updates
 
@@ -2815,12 +2651,12 @@ In the Cloudflare dashboard for your domain:
    - **Expected status**: `401` (gateway auth rejects unauthenticated requests — that's a valid "alive" signal)
    - **Notification**: Email or webhook on failure
 
-**Option B: Self-Hosted Uptime Kuma**
+**Option B: Uptime Kuma on the Monitoring VPS**
 
-If you have a second server (even a cheap VPS), [Uptime Kuma](https://github.com/louislam/uptime-kuma) provides a full monitoring dashboard:
+The monitoring VPS deployed via `caprover-playbook.yml` (§13.2.1) includes [Uptime Kuma](https://github.com/louislam/uptime-kuma). It runs on the separate monitoring VPS alongside Prometheus and Grafana:
 
 ```bash
-# On a DIFFERENT host — not the OpenClaw server
+# On the monitoring VPS (deployed via caprover-playbook.yml)
 docker run -d \
   --name uptime-kuma \
   -p 3001:3001 \
@@ -3286,9 +3122,9 @@ The fastest path to handling more concurrent users and heavier tool execution lo
 
 | Tier | Spec | Use Case |
 |------|------|----------|
-| **Starter** | 4 vCPU, 8 GB RAM, 500 GB NVMe | 1-3 concurrent users, light tool use. Monitoring requires reducing sandboxes. |
-| **Growth** | 8 vCPU, 16 GB RAM, 1 TB NVMe | 5-10 concurrent users, monitoring + full sandbox concurrency |
-| **Production** (current) | 16 vCPU, 64 GB RAM, 4 TB NVMe | 10-25 concurrent users, heavy sandbox + monitoring + memory/RAG + multi-instance |
+| **Starter** | 4 vCPU, 8 GB RAM, 500 GB NVMe | 1-3 concurrent users, light tool use |
+| **Growth** | 8 vCPU, 16 GB RAM, 1 TB NVMe | 5-10 concurrent users, full sandbox concurrency |
+| **Production** (current) | 16 vCPU, 64 GB RAM, 4 TB NVMe | 10-25 concurrent users, heavy sandbox + memory/RAG + multi-instance |
 
 After upgrading the server, update `docker-compose.yml` resource limits:
 

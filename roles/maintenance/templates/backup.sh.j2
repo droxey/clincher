@@ -19,7 +19,6 @@ mkdir -p "{{ openclaw_base_dir }}/monitoring/logs" "{{ openclaw_base_dir }}/moni
   [ -f "{{ openclaw_base_dir }}/Caddyfile" ] && CONFIG_FILES="$CONFIG_FILES Caddyfile"
   [ -f "{{ openclaw_base_dir }}/compose.caddy.yml" ] && CONFIG_FILES="$CONFIG_FILES compose.caddy.yml"
   [ -f "{{ openclaw_base_dir }}/compose.tunnel.yml" ] && CONFIG_FILES="$CONFIG_FILES compose.tunnel.yml"
-  [ -f "{{ openclaw_base_dir }}/compose.monitoring.yml" ] && CONFIG_FILES="$CONFIG_FILES compose.monitoring.yml"
   # shellcheck disable=SC2086
   tar -czf "{{ openclaw_base_dir }}/monitoring/backups/openclaw-config-$(date +%F).tar.gz" \
     -C {{ openclaw_base_dir }} $CONFIG_FILES 2>> "$LOG"

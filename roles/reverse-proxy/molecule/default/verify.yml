@@ -38,7 +38,7 @@
           - "'test.example.com' in (caddyfile_content.content | b64decode)"
           - "'reverse_proxy openclaw:18789' in (caddyfile_content.content | b64decode)"
           - "'grafana' not in (caddyfile_content.content | b64decode)"
-        fail_msg: "Caddyfile is missing expected content or contains unexpected monitoring block"
+        fail_msg: "Caddyfile is missing expected content"
 
     - name: Read Caddy Compose file
       ansible.builtin.slurp:

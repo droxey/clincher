@@ -22,6 +22,7 @@ telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
 # ── Reverse Proxy (if using Cloudflare Tunnel) ──────────────────────
 # tunnel_token: "YOUR_TUNNEL_TOKEN"
 
-# ── Monitoring (if monitoring_enabled: true) ─────────────────────────
+# ── Monitoring (Grafana on separate monitoring VPS) ──────────────────
+# Only needed when deploying caprover-playbook.yml for external monitoring.
 # Generate with: openssl rand -base64 24
-grafana_admin_password: ""
+# grafana_admin_password: ""

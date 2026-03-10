@@ -266,7 +266,6 @@ Source instructions: `prompts/ansible-review.prompt.md`
   (cd roles/openclaw-harden && molecule test)
   (cd roles/reverse-proxy && molecule test)
   (cd roles/maintenance && molecule test)
-  (cd roles/monitoring && molecule test)
 
   ansible-playbook playbook.yml -i inventory/hosts.yml --check --diff --ask-vault-pass
   ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml --check --diff --ask-vault-pass
@@ -450,5 +449,4 @@ Source instructions: `.claude/commands/ansible-review.md`
   (cd roles/openclaw-harden && molecule test)
   (cd roles/reverse-proxy && molecule test)
   (cd roles/maintenance && molecule test)
-  (cd roles/monitoring && molecule test)
   ```

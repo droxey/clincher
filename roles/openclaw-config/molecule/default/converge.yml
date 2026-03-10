@@ -24,7 +24,6 @@
     litellm_master_key: "test-fixture-litellm-key-000000000000000000000000000000000000000"
     anthropic_api_key: "sk-ant-test-key-for-molecule"
     voyage_api_key: "pa-test-key-for-molecule"
-    monitoring_enabled: false
 
     # Egress whitelist
     egress_allowed_domains:
