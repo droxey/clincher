@@ -152,31 +152,54 @@ Defense-in-depth: socket proxy, egress whitelist (Smokescreen), `openclaw-net` i
 
 ```mermaid
 graph TB
-    CF["☁️ Cloudflare (WAF + CDN)"]
-    PROXY["Caddy / Nginx<br/>reverse proxy · proxy-net"]
+    CF["☁️ Cloudflare<br/>WAF + CDN"]
+    PROXY["🔒 Caddy / Nginx<br/>reverse proxy"]
 
-    subgraph INTERNAL ["openclaw-net — internal — no direct internet"]
-        GW["openclaw<br/>gateway + agent runtime<br/>openclaw-net + proxy-net"]
-        DP["docker-proxy<br/>socket proxy<br/>openclaw-net"]
-        LLM["litellm<br/>LLM proxy + cost controls<br/>openclaw-net"]
-        REDIS["redis<br/>RediSearch semantic cache<br/>openclaw-net"]
-        EGRESS["openclaw-egress (Smokescreen)<br/>egress whitelist<br/>openclaw-net + egress-net"]
+    subgraph INTERNAL ["🔐 openclaw-net · internal · no direct internet"]
+        GW["🤖 openclaw<br/>gateway + agent runtime"]
+        DP["🐳 docker-proxy<br/>socket proxy"]
+        LLM["💬 litellm<br/>LLM routing + cost controls"]
+        REDIS["🗄️ redis<br/>RediSearch semantic cache"]
+        EGRESS["🚪 openclaw-egress<br/>Smokescreen egress whitelist"]
+
+        subgraph MON ["📊 monitoring · optional"]
+            PROM["📈 prometheus<br/>metrics · 14d retention"]
+            GRAF["📉 grafana<br/>dashboards + alerts"]
+            REXP["📡 redis-exporter<br/>Redis metrics"]
+        end
     end
 
-    SOCK["/var/run/docker.sock<br/>(read-only)"]
-    LLMAPI["LLM APIs<br/>.anthropic.com · .openai.com"]
+    SOCK["🔌 /var/run/docker.sock<br/>read-only"]
+    LLMAPI["☁️ LLM APIs<br/>.anthropic.com · .openai.com"]
 
     CF -->|HTTPS| PROXY
     PROXY -->|proxy-net| GW
+    PROXY -.->|proxy-net| GRAF
     GW --> DP
     GW --> LLM
     GW --> REDIS
     LLM --> EGRESS
     DP --> SOCK
     EGRESS -->|egress-net| LLMAPI
+    PROM -.->|scrape :4000| LLM
+    PROM -.->|scrape :9121| REXP
+    REXP -.-> REDIS
+    GRAF -.-> PROM
+
+    classDef external fill:#f9f0ff,stroke:#9b59b6,stroke-width:2px,color:#333
+    classDef proxy fill:#e8f8f5,stroke:#1abc9c,stroke-width:2px,color:#333
+    classDef core fill:#ebf5fb,stroke:#3498db,stroke-width:2px,color:#333
+    classDef monitor fill:#fef9e7,stroke:#f39c12,stroke-width:2px,color:#333
+    classDef infra fill:#fdedec,stroke:#e74c3c,stroke-width:2px,color:#333
+
+    class CF,LLMAPI external
+    class PROXY proxy
+    class GW,DP,LLM,REDIS,EGRESS core
+    class PROM,GRAF,REXP monitor
+    class SOCK infra
 ```
 
-Three bridge networks enforce least-privilege communication. `openclaw-net` is **internal** — no internet access. The egress proxy bridges internal and external via `egress-net`. The reverse proxy reaches the gateway via `proxy-net`. Traffic never leaves the host between services, so no IPSEC encryption is needed.
+Three bridge networks enforce least-privilege communication. `openclaw-net` is **internal** — no internet access. The egress proxy bridges internal and external via `egress-net`. The reverse proxy reaches the gateway and Grafana via `proxy-net`. When monitoring is enabled, Prometheus scrapes LiteLLM and the Redis exporter on the internal network; Grafana is exposed through the reverse proxy. Dashed lines indicate optional monitoring connections. Traffic never leaves the host between services, so no IPSEC encryption is needed.
 
 ## Table of Contents
 
