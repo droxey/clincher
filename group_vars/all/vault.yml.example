@@ -9,6 +9,18 @@ anthropic_api_key: "sk-ant-your-key-here"
 voyage_api_key: "pa-your-key-here"
 # openai_api_key: "sk-your-key-here"
 
+# ── Optional OpenClaw Runtime Env (for Clawtomaton, etc.) ───────────
+# Set only the variables you actually need; each one is exposed to the
+# OpenClaw container at runtime via /opt/openclaw/.env.
+# openclaw_extra_env:
+#   BASE_RPC_URL: "https://mainnet.base.org"
+#   # Optional Clawtomaton extras:
+#   # CONWAY_API_KEY: "..."
+#   # UNISWAP_API_KEY: "..."
+#   # WAYFINDER_API_KEY: "..."
+#   # HERD_ACCESS_TOKEN: "..."
+#   # WALLETCONNECT_PROJECT_ID: "..."
+
 # ── Secrets (REQUIRED — generate each with: openssl rand -hex 32) ────
 # These must be set before the first run and kept stable across re-runs.
 # Changing them after deployment breaks auth tokens and unreadable backups.

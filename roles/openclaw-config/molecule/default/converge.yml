@@ -68,6 +68,9 @@
     openclaw_gateway_tool_denials:
       - process
       - browser
+    openclaw_extra_env:
+      BASE_RPC_URL: "https://mainnet.base.org"
+      CONWAY_API_KEY: "conway-test-key"
 
     domain: "test.example.com"
     reverse_proxy: "caddy"

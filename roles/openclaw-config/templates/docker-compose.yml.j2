@@ -60,6 +60,11 @@ services:
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
       OPENCLAW_DISABLE_BONJOUR: "1"
       NODE_OPTIONS: "--dns-result-order=ipv4first"
+{% if openclaw_extra_env is defined %}
+{% for key, value in openclaw_extra_env | dictsort %}
+      {{ key }}: "{{ '${' ~ key ~ '}' }}"
+{% endfor %}
+{% endif %}
     volumes:
       - openclaw-data:/root/.openclaw
       - {{ uploads_dir }}:/root/uploads

@@ -63,6 +63,13 @@
           - "'docker-proxy:' in (compose_content.content | b64decode)"
         fail_msg: "docker-compose.yml is missing expected services"
 
+    - name: Verify docker-compose.yml contains extra OpenClaw env passthrough
+      ansible.builtin.assert:
+        that:
+          - "'BASE_RPC_URL: \"${BASE_RPC_URL}\"' in (compose_content.content | b64decode)"
+          - "'CONWAY_API_KEY: \"${CONWAY_API_KEY}\"' in (compose_content.content | b64decode)"
+        fail_msg: "docker-compose.yml is missing extra OpenClaw environment variables"
+
     - name: Read smokescreen ACL
       ansible.builtin.slurp:
         src: "{{ openclaw_base_dir }}/config/smokescreen-acl.yaml"
@@ -88,6 +95,8 @@
           - "'LITELLM_MASTER_KEY=' in (env_content.content | b64decode)"
           - "'ANTHROPIC_API_KEY=' in (env_content.content | b64decode)"
           - "'VOYAGE_API_KEY=' in (env_content.content | b64decode)"
+          - "'BASE_RPC_URL=https://mainnet.base.org' in (env_content.content | b64decode)"
+          - "'CONWAY_API_KEY=conway-test-key' in (env_content.content | b64decode)"
         fail_msg: ".env is missing required environment variables"
       no_log: true
 

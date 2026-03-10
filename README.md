@@ -1540,6 +1540,33 @@ exit
 
 > **Security reminder**: Every provider key you add is a credential that could be exfiltrated via prompt injection. The SOUL.md (Step 5) instructs agents to never reveal keys, and `logging.redactSensitive` prevents them from appearing in transcripts — but the strongest protection is minimizing the number of keys in the environment. Add only what you need.
 
+#### Optional: Clawtomaton Runtime Env
+
+If agents inside OpenClaw need to run [Clawtomaton](https://clawn.ch/clawtomaton), pass its runtime env through the `openclaw_extra_env` variable. The `openclaw-config` role writes these keys into `/opt/openclaw/.env` and injects them into the `openclaw` container automatically.
+
+Store the values in `group_vars/all/vault.yml`:
+
+```yaml
+openclaw_extra_env:
+  BASE_RPC_URL: "https://mainnet.base.org"
+  # Optional Clawtomaton extras:
+  # CONWAY_API_KEY: "..."
+  # UNISWAP_API_KEY: "..."
+  # WAYFINDER_API_KEY: "..."
+  # HERD_ACCESS_TOKEN: "..."
+  # WALLETCONNECT_PROJECT_ID: "..."
+```
+
+Clawtomaton also needs matching Smokescreen egress entries. At minimum, whitelist the Base RPC endpoint and Clawnch API:
+
+```yaml
+egress_extra_domains:
+  - "mainnet.base.org"
+  - "clawn.ch"
+```
+
+If you enable optional Clawtomaton skills, add only the extra domains they require, such as `api.moltbunker.com`, `api.conway.tech`, or `api.conway.domains`. Keep the whitelist tight — every added domain is another possible data-exfiltration target.
+
 Restart to load the new environment:
 To add or rotate LLM provider API keys, edit `/opt/openclaw/.env` on the host and restart LiteLLM:
 

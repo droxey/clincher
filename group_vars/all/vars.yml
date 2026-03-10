@@ -88,6 +88,10 @@ redis_maxmemory: "256mb"
 openclaw_default_model: "anthropic/claude-opus-4-6"
 openclaw_heartbeat_model: "anthropic/claude-3-5-haiku-latest"
 openclaw_max_tokens: 4096
+# Optional extra env vars passed into the OpenClaw container via /opt/openclaw/.env.
+# Use this for integrations that need runtime credentials or endpoints (for example,
+# Clawtomaton's BASE_RPC_URL and optional feature-specific API keys).
+openclaw_extra_env: {}
 
 # Sandbox
 sandbox_memory_limit: "1g"
