@@ -115,7 +115,7 @@
   until: ao_clone is not failed
   become: true
   become_user: "{{ deploy_user }}"
-  notify: Build and link agent-orchestrator
+  notify: Build agent-orchestrator
 
 - name: Flush handlers to build before service start
   ansible.builtin.meta: flush_handlers
