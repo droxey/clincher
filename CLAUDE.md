@@ -55,20 +55,30 @@ Smokescreen egress proxy built from source via multi-stage Dockerfile. Docker Co
 
 ### Deployment Topology
 
-```
-              Cloudflare (WAF + CDN)
-                       │ HTTPS
-              Caddy / Nginx [proxy-net]
-                       │
-          ┌────────────┼────────────┐
-          │            │            │
-    docker-proxy   openclaw(gw)  openclaw-egress
-    [openclaw-net] [openclaw-net  [openclaw-net +
-                   + proxy-net]   egress-net]
-          │            │            │
-   /var/run/       openclaw-    LLM API whitelist
-   docker.sock     data vol     (.anthropic.com,
-   (read-only)                   .openai.com)
+```mermaid
+graph TB
+    CF["☁️ Cloudflare (WAF + CDN)"]
+    PROXY["Caddy / Nginx<br/>reverse proxy · proxy-net"]
+
+    subgraph INTERNAL ["openclaw-net — internal — no direct internet"]
+        GW["openclaw<br/>gateway + agent runtime<br/>openclaw-net + proxy-net"]
+        DP["docker-proxy<br/>socket proxy<br/>openclaw-net"]
+        LLM["litellm<br/>LLM proxy + cost controls<br/>openclaw-net"]
+        REDIS["redis<br/>RediSearch semantic cache<br/>openclaw-net"]
+        EGRESS["openclaw-egress (Smokescreen)<br/>egress whitelist<br/>openclaw-net + egress-net"]
+    end
+
+    SOCK["/var/run/docker.sock<br/>(read-only)"]
+    LLMAPI["LLM APIs<br/>.anthropic.com · .openai.com"]
+
+    CF -->|HTTPS| PROXY
+    PROXY -->|proxy-net| GW
+    GW --> DP
+    GW --> LLM
+    GW --> REDIS
+    LLM --> EGRESS
+    DP --> SOCK
+    EGRESS -->|egress-net| LLMAPI
 ```
 
 Three bridge networks enforce least-privilege. `openclaw-net` is `internal: true` — no direct internet. Egress proxy bridges internal/external for whitelisted LLM calls only.
