@@ -247,6 +247,17 @@ watchdog_memory_threshold: 90
 auto_reboot: true
 auto_reboot_time: "05:00"
 
+# ── Convenience ──────────────────────────────────────────────────────
+# Shell aliases (oc-status, oc-logs, oc-backup, etc.) in /etc/profile.d/
+convenience_aliases: true
+# Web-based file manager at https://<domain>/files/
+filebrowser_enabled: false
+filebrowser_version: "v2.32.0"
+filebrowser_cpus: "0.5"
+filebrowser_memory: "64M"
+# Shared directory between host and OpenClaw container
+uploads_dir: "{{ openclaw_base_dir }}/uploads"
+
 # ── Tailscale (Optional) ────────────────────────────────────────────
 tailscale_enabled: false
 

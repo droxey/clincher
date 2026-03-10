@@ -13,6 +13,7 @@
     # Domain and proxy selection
     domain: "test.example.com"
     monitoring_enabled: false
+    filebrowser_enabled: false
 
     # Image versions
     caddy_version: "2.8.4-alpine"

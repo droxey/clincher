@@ -13,6 +13,7 @@ role-tests:                    ## Run Molecule tests for template-bearing roles
 	cd roles/reverse-proxy && molecule test
 	cd roles/maintenance && molecule test
 	cd roles/monitoring && molecule test
+	cd roles/convenience && molecule test
 
 deploy:                        ## Deploy OpenClaw to target server
 	ansible-playbook playbook.yml -i inventory/hosts.yml --ask-vault-pass

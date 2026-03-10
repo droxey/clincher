@@ -1,0 +1,13 @@
+---
+# Cleanup temporary files after molecule test
+- name: Cleanup convenience test artifacts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Remove temporary test directory
+      ansible.builtin.file:
+        path: /tmp/molecule-convenience
+        state: absent

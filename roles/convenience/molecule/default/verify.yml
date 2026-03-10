@@ -1,0 +1,74 @@
+---
+# Verify convenience role outputs
+- name: Verify convenience template rendering
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    openclaw_base_dir: /tmp/molecule-convenience
+
+  tasks:
+    - name: Check rendered files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: file_checks
+      loop:
+        - "{{ openclaw_base_dir }}/openclaw.sh"
+        - "{{ openclaw_base_dir }}/compose.convenience.yml"
+        - "{{ openclaw_base_dir }}/config/filebrowser/filebrowser.json"
+
+    - name: Assert files exist
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "File {{ item.item }} was not created"
+      loop: "{{ file_checks.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read openclaw.sh
+      ansible.builtin.slurp:
+        src: "{{ openclaw_base_dir }}/openclaw.sh"
+      register: aliases_content
+
+    - name: Verify shell aliases contain expected commands
+      ansible.builtin.assert:
+        that:
+          - "'oc-status' in (aliases_content.content | b64decode)"
+          - "'oc-doctor' in (aliases_content.content | b64decode)"
+          - "'oc-logs' in (aliases_content.content | b64decode)"
+          - "'oc-restart' in (aliases_content.content | b64decode)"
+          - "'oc-backup' in (aliases_content.content | b64decode)"
+          - "'oc-shell' in (aliases_content.content | b64decode)"
+          - "'oc-uploads' in (aliases_content.content | b64decode)"
+          - "'/tmp/molecule-convenience' in (aliases_content.content | b64decode)"
+        fail_msg: "openclaw.sh is missing expected aliases or paths"
+
+    - name: Read compose.convenience.yml
+      ansible.builtin.slurp:
+        src: "{{ openclaw_base_dir }}/compose.convenience.yml"
+      register: compose_content
+
+    - name: Verify compose.convenience.yml contains expected services
+      ansible.builtin.assert:
+        that:
+          - "'filebrowser:' in (compose_content.content | b64decode)"
+          - "'filebrowser/filebrowser:v2.32.0' in (compose_content.content | b64decode)"
+          - "'proxy-net' in (compose_content.content | b64decode)"
+          - "'/tmp/molecule-convenience/uploads:/srv' in (compose_content.content | b64decode)"
+          - "'no-new-privileges:true' in (compose_content.content | b64decode)"
+        fail_msg: "compose.convenience.yml is missing expected services or config"
+
+    - name: Read filebrowser.json
+      ansible.builtin.slurp:
+        src: "{{ openclaw_base_dir }}/config/filebrowser/filebrowser.json"
+      register: filebrowser_content
+
+    - name: Verify filebrowser.json contains expected config
+      ansible.builtin.assert:
+        that:
+          - "'8080' in (filebrowser_content.content | b64decode)"
+          - "'/files' in (filebrowser_content.content | b64decode)"
+          - "'/srv' in (filebrowser_content.content | b64decode)"
+        fail_msg: "filebrowser.json is missing expected configuration"

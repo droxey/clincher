@@ -6,6 +6,13 @@
     }
 
 {% endif %}
+{% if filebrowser_enabled | bool %}
+    # Filebrowser file manager (behind Filebrowser's own auth)
+    handle_path /files/* {
+        reverse_proxy openclaw-filebrowser:8080
+    }
+
+{% endif %}
     # Default: OpenClaw gateway
     reverse_proxy openclaw:18789
 }

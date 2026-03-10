@@ -87,6 +87,8 @@ jobs:
             role: maintenance
           - scenario: default
             role: monitoring
+          - scenario: default
+            role: convenience
           - scenario: caprover
             role: ""
     steps:

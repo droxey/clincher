@@ -1,0 +1,86 @@
+---
+# Convenience features: shell aliases and optional Filebrowser file manager
+# Runs after deploy + hardening, before verify.
+
+# ── Shell Aliases ────────────────────────────────────────────────────
+- name: Deploy OpenClaw shell aliases
+  ansible.builtin.template:
+    src: openclaw.sh.j2
+    dest: /etc/profile.d/openclaw.sh
+    owner: root
+    group: root
+    mode: "0644"
+  when: convenience_aliases | bool
+
+# ── Shared Uploads Directory ─────────────────────────────────────────
+- name: Create shared uploads directory
+  ansible.builtin.file:
+    path: "{{ uploads_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── Filebrowser (Optional) ──────────────────────────────────────────
+- name: Deploy Filebrowser
+  when: filebrowser_enabled | bool
+  block:
+    - name: Create Filebrowser config directory
+      ansible.builtin.file:
+        path: "{{ openclaw_base_dir }}/config/filebrowser"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Deploy Filebrowser config
+      ansible.builtin.template:
+        src: filebrowser.json.j2
+        dest: "{{ openclaw_base_dir }}/config/filebrowser/filebrowser.json"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Deploy Filebrowser compose overlay
+      ansible.builtin.template:
+        src: compose.convenience.yml.j2
+        dest: "{{ openclaw_base_dir }}/compose.convenience.yml"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Pull Filebrowser image
+      community.docker.docker_image:
+        name: "filebrowser/filebrowser:{{ filebrowser_version }}"
+        source: pull
+      retries: 3
+      delay: 10
+      register: filebrowser_pull
+      until: filebrowser_pull is not failed
+
+    - name: Check if monitoring compose overlay exists
+      ansible.builtin.stat:
+        path: "{{ openclaw_base_dir }}/compose.monitoring.yml"
+      register: monitoring_compose_file
+
+    - name: Build convenience compose file list
+      ansible.builtin.set_fact:
+        _convenience_compose_files: >-
+          {{ ['docker-compose.yml', 'compose.convenience.yml'] +
+             (['compose.monitoring.yml'] if monitoring_compose_file.stat.exists else []) +
+             (['compose.caddy.yml'] if reverse_proxy == 'caddy' else []) +
+             (['compose.tunnel.yml'] if reverse_proxy == 'tunnel' else []) }}
+
+    - name: Start stack with Filebrowser overlay
+      community.docker.docker_compose_v2:
+        project_src: "{{ openclaw_base_dir }}"
+        files: "{{ _convenience_compose_files }}"
+        state: present
+
+    - name: Display Filebrowser access info
+      ansible.builtin.debug:
+        msg: |
+          Filebrowser deployed at: https://{{ domain }}/files/
+          Default credentials: admin / admin (change on first login)
+          Uploads directory: {{ uploads_dir }}
+          Filebrowser adds ~64 MB RAM to the stack.

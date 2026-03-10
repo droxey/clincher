@@ -356,6 +356,8 @@
         (vendor_skills_enabled | default(false) | bool)
     - role: openclaw-integrate
       tags: [integrate]
+    - role: convenience
+      tags: [convenience]
     - role: reverse-proxy
       tags: [proxy]
     - role: verify

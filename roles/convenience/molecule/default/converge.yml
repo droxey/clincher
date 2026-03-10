@@ -1,0 +1,55 @@
+---
+# Converge playbook for convenience role
+# Renders all templates to a temporary directory without requiring Docker.
+- name: Test convenience role template rendering
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+
+  vars:
+    openclaw_base_dir: /tmp/molecule-convenience
+    uploads_dir: /tmp/molecule-convenience/uploads
+
+    # Feature flags
+    convenience_aliases: true
+    filebrowser_enabled: true
+
+    # Image versions
+    filebrowser_version: "v2.32.0"
+
+    # Resource limits
+    filebrowser_cpus: "0.5"
+    filebrowser_memory: "64M"
+
+    domain: "test.example.com"
+
+  tasks:
+    - name: Create convenience directory tree
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ openclaw_base_dir }}"
+        - "{{ openclaw_base_dir }}/config"
+        - "{{ openclaw_base_dir }}/config/filebrowser"
+        - "{{ uploads_dir }}"
+
+    - name: Deploy shell aliases script
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/openclaw.sh.j2"
+        dest: "{{ openclaw_base_dir }}/openclaw.sh"
+        mode: "0644"
+
+    - name: Deploy convenience Docker Compose overlay
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/compose.convenience.yml.j2"
+        dest: "{{ openclaw_base_dir }}/compose.convenience.yml"
+        mode: "0644"
+
+    - name: Deploy Filebrowser config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/filebrowser.json.j2"
+        dest: "{{ openclaw_base_dir }}/config/filebrowser/filebrowser.json"
+        mode: "0644"

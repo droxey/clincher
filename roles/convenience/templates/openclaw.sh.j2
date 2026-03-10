@@ -1,0 +1,47 @@
+# {{ ansible_managed }}
+# OpenClaw operator shortcuts — loaded via /etc/profile.d/
+# Usage: log in via SSH, then type any oc-* command.
+
+OC_DIR="{{ openclaw_base_dir }}"
+OC_COMPOSE="docker compose -f ${OC_DIR}/docker-compose.yml"
+
+# ── Status & Health ──────────────────────────────────────────────────
+alias oc-status='${OC_COMPOSE} ps && echo && docker stats --no-stream'
+alias oc-doctor='docker exec openclaw openclaw doctor'
+alias oc-audit='docker exec openclaw openclaw security audit --deep'
+alias oc-health='${OC_COMPOSE} ps --format "table {% raw %}{{.Name}}\t{{.Status}}\t{{.Health}}{% endraw %}"'
+
+# ── Logs ─────────────────────────────────────────────────────────────
+alias oc-logs='${OC_COMPOSE} logs --tail 100'
+alias oc-logs-follow='${OC_COMPOSE} logs --tail 50 -f'
+alias oc-logs-gw='${OC_COMPOSE} logs --tail 100 openclaw'
+alias oc-logs-llm='${OC_COMPOSE} logs --tail 100 litellm'
+alias oc-logs-egress='${OC_COMPOSE} logs --tail 100 openclaw-egress'
+
+# ── Lifecycle ────────────────────────────────────────────────────────
+alias oc-restart='${OC_COMPOSE} restart openclaw && echo "Gateway restarted"'
+alias oc-restart-all='${OC_COMPOSE} restart && echo "All services restarted"'
+alias oc-stop='${OC_COMPOSE} stop'
+alias oc-start='${OC_COMPOSE} start'
+alias oc-shell='docker exec -it openclaw /bin/sh'
+
+# ── Configuration ────────────────────────────────────────────────────
+alias oc-config='docker exec openclaw openclaw config'
+alias oc-config-get='docker exec openclaw openclaw config get'
+alias oc-sandbox='docker exec openclaw openclaw sandbox explain'
+
+# ── Memory & RAG ─────────────────────────────────────────────────────
+alias oc-memory='docker exec openclaw openclaw memory search'
+alias oc-memory-index='docker exec openclaw openclaw memory index --verify'
+
+# ── Maintenance ──────────────────────────────────────────────────────
+alias oc-backup='${OC_DIR}/monitoring/backup.sh'
+alias oc-watchdog='${OC_DIR}/monitoring/watchdog.sh'
+alias oc-usage='docker exec openclaw openclaw usage cost'
+
+# ── Resources ────────────────────────────────────────────────────────
+alias oc-disk='df -h ${OC_DIR} && echo && du -sh ${OC_DIR}/*'
+alias oc-redis='docker exec openclaw-redis redis-cli'
+
+# ── Uploads ──────────────────────────────────────────────────────────
+alias oc-uploads='ls -lah {{ uploads_dir }}/'
