@@ -67,7 +67,7 @@
   changed_when: false
 
 - name: Prepare pnpm via corepack
-  ansible.builtin.command: corepack prepare pnpm@latest --activate
+  ansible.builtin.command: corepack prepare pnpm@{{ agent_orchestrator_pnpm_version }} --activate
   changed_when: false
 
 - name: Check if GitHub CLI is already installed
