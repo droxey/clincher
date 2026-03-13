@@ -1,0 +1,85 @@
+---
+# {{ ansible_managed }}
+# Clawvisor: API gateway for AI agent authorization
+# Source: https://github.com/clawvisor/clawvisor
+# Runs as a separate Compose stack alongside the main OpenClaw stack.
+# Attached to openclaw-net for webhook communication with the OpenClaw gateway.
+
+services:
+  clawvisor:
+    build:
+      context: {{ clawvisor_install_dir }}/repo
+      dockerfile: Dockerfile
+    container_name: clawvisor
+    restart: unless-stopped
+    depends_on:
+      clawvisor-db:
+        condition: service_healthy
+    env_file:
+      - {{ clawvisor_install_dir }}/.env
+    ports:
+      - "127.0.0.1:{{ clawvisor_port }}:{{ clawvisor_port }}"
+    networks:
+      - openclaw-net
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ clawvisor_cpus }}"
+          memory: {{ clawvisor_memory }}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:{{ clawvisor_port }}/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  clawvisor-db:
+    image: postgres:{{ clawvisor_postgres_version }}
+    container_name: clawvisor-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clawvisor
+      POSTGRES_DB: clawvisor
+      POSTGRES_PASSWORD_FILE: /run/secrets/clawvisor_db_password
+    volumes:
+      - clawvisor-pgdata:/var/lib/postgresql/data
+    networks:
+      - openclaw-net
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ clawvisor_postgres_cpus }}"
+          memory: {{ clawvisor_postgres_memory }}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    secrets:
+      - clawvisor_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clawvisor -d clawvisor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  clawvisor-pgdata:
+
+networks:
+  openclaw-net:
+    external: true
+
+secrets:
+  clawvisor_db_password:
+    file: {{ clawvisor_install_dir }}/secrets/db_password

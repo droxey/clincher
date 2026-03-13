@@ -1,0 +1,178 @@
+---
+# ByteRover: Persistent knowledge management for AI agents
+# Source: https://www.byterover.dev
+# Skill: https://clawhub.ai/byteroverinc/byterover
+# Saves tokens by storing project patterns, decisions, and architectural rules
+# in .brv/context-tree/ — agents query before work, curate after.
+
+# ── Prerequisites ──────────────────────────────────────────────────────────
+
+- name: Verify OpenClaw container is running
+  ansible.builtin.command: docker inspect openclaw --format '{% raw %}{{ .State.Status }}{% endraw %}'
+  register: brv_oc_state
+  changed_when: false
+  failed_when: brv_oc_state.stdout != 'running'
+
+# ── Install ByteRover CLI ──────────────────────────────────────────────────
+
+- name: Install byterover-cli inside OpenClaw container
+  ansible.builtin.command: >
+    docker exec openclaw npm install -g byterover-cli@{{ byterover_cli_version }}
+  register: brv_install
+  changed_when: "'added' in brv_install.stdout | default('')"
+
+- name: Verify brv CLI is available
+  ansible.builtin.command: docker exec openclaw brv --version
+  register: brv_version
+  changed_when: false
+
+- name: Show ByteRover CLI version
+  ansible.builtin.debug:
+    msg: "ByteRover CLI installed: {{ brv_version.stdout }}"
+
+# ── Install ByteRover Skill via ClawHub ────────────────────────────────────
+
+- name: Install ByteRover skill via clawhub
+  ansible.builtin.command: >
+    docker exec openclaw npx clawhub install byteroverinc/byterover --force
+  register: brv_skill_install
+  changed_when: "'installed' in brv_skill_install.stdout | lower"
+
+- name: Verify ByteRover skill installed
+  ansible.builtin.command: >
+    docker exec openclaw test -f /root/.openclaw/workspace/skills/byterover/SKILL.md
+  changed_when: false
+
+# ── Configure Provider ─────────────────────────────────────────────────────
+
+- name: Connect ByteRover provider (default — no API key required)
+  ansible.builtin.command: >
+    docker exec openclaw brv providers connect {{ byterover_provider }}
+  changed_when: false
+  when: byterover_provider == 'byterover'
+
+- name: Connect custom LLM provider for ByteRover
+  block:
+    - name: Write ByteRover API key to host tempfile
+      ansible.builtin.copy:
+        content: "{{ byterover_api_key }}"
+        dest: /tmp/.brv-api-key
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Copy ByteRover API key into container
+      ansible.builtin.command: docker cp /tmp/.brv-api-key openclaw:/tmp/.brv-api-key
+      changed_when: false
+      no_log: true
+
+    - name: Connect custom provider with API key
+      ansible.builtin.command: >
+        docker exec openclaw sh -c
+        'brv providers connect {{ byterover_provider }}
+        --api-key "$(cat /tmp/.brv-api-key)"
+        {% if byterover_model is defined %}--model {{ byterover_model }}{% endif %}
+        && rm -f /tmp/.brv-api-key'
+      changed_when: false
+      no_log: true
+
+  always:
+    - name: Remove ByteRover API key tempfile from host
+      ansible.builtin.file:
+        path: /tmp/.brv-api-key
+        state: absent
+      no_log: true
+  when:
+    - byterover_provider != 'byterover'
+    - byterover_api_key is defined
+
+# ── Initialize ByteRover in Workspace ──────────────────────────────────────
+
+- name: Check ByteRover status
+  ansible.builtin.command: docker exec -w /root/.openclaw/workspace openclaw brv status
+  register: brv_status
+  changed_when: false
+  failed_when: false
+
+- name: Show ByteRover status
+  ansible.builtin.debug:
+    msg: "{{ brv_status.stdout }}"
+
+# ── Memory Flush Configuration ─────────────────────────────────────────────
+# When the context window nears compaction, ByteRover curates durable memories
+# to .brv/context-tree/. This preserves insights across sessions.
+
+- name: Configure memory flush token threshold
+  ansible.builtin.command: >
+    docker exec openclaw openclaw config set
+    memory.byterover.flushThreshold {{ byterover_memory_flush_token_threshold }}
+  changed_when: false
+  when: byterover_memory_flush_enabled | bool
+
+# ── Daily Knowledge Mining Cron ────────────────────────────────────────────
+# Scheduled cron extracts patterns from session notes into the context tree.
+# Host cron runs docker exec — requires byterover-cli inside the container.
+
+- name: Install daily knowledge mining cron job
+  ansible.builtin.cron:
+    name: "byterover-knowledge-mining"
+    user: root
+    hour: "{{ byterover_knowledge_mining_cron_hour }}"
+    minute: "{{ byterover_knowledge_mining_cron_minute }}"
+    job: >-
+      docker exec -w /root/.openclaw/workspace openclaw
+      brv curate "Extract patterns from today's sessions"
+      >> /var/log/byterover-mining.log 2>&1
+  when: byterover_knowledge_mining_enabled | bool
+
+# ── Restart to Apply Configuration ─────────────────────────────────────────
+
+- name: Restart OpenClaw to apply ByteRover configuration
+  community.docker.docker_compose_v2:
+    project_src: "{{ openclaw_base_dir }}"
+    services:
+      - openclaw
+    state: restarted
+
+- name: Wait for OpenClaw to become healthy after ByteRover config
+  ansible.builtin.command: >
+    docker inspect openclaw
+    --format '{% raw %}{{ if .State.Health }}{{ .State.Health.Status }}{{ else }}running{{ end }}{% endraw %}'
+  register: brv_oc_health
+  until: brv_oc_health.stdout in ['healthy', 'running']
+  retries: 12
+  delay: 10
+  changed_when: false
+
+# ── Verification ───────────────────────────────────────────────────────────
+
+- name: Run ByteRover test query
+  ansible.builtin.command: >
+    docker exec -w /root/.openclaw/workspace openclaw
+    brv query "What patterns exist in this project?"
+  register: brv_test_query
+  changed_when: false
+  failed_when: false
+
+- name: Show ByteRover test query result
+  ansible.builtin.debug:
+    msg: |
+      ByteRover query test {{ 'PASSED' if brv_test_query.rc == 0 else 'FAILED' }}
+      {% if brv_test_query.rc != 0 %}
+      stderr: {{ brv_test_query.stderr | default('') }}
+      Check: brv status, provider connection, container logs
+      {% endif %}
+
+- name: Show ByteRover deployment summary
+  ansible.builtin.debug:
+    msg: |
+      ByteRover deployed successfully.
+      CLI version: {{ brv_version.stdout }}
+      Provider: {{ byterover_provider }}
+      Memory flush: {{ 'enabled (threshold: ' ~ byterover_memory_flush_token_threshold ~ ' tokens)' if byterover_memory_flush_enabled else 'disabled' }}
+      Knowledge mining: {{ 'enabled (daily at ' ~ byterover_knowledge_mining_cron_hour ~ ':' ~ '%02d' | format(byterover_knowledge_mining_cron_minute) ~ ')' if byterover_knowledge_mining_enabled else 'disabled' }}
+      Verification commands:
+        docker exec openclaw brv status
+        docker exec -w /root/.openclaw/workspace openclaw brv query "test"
+        docker exec -w /root/.openclaw/workspace openclaw brv curate view

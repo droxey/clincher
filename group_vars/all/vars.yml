@@ -226,6 +226,47 @@ agent_orchestrator_max_concurrent: 5
 agent_orchestrator_auto_merge: false
 # github_token lives in vault.yml
 
+# ── Clawvisor (API Gateway for Agent Authorization) ─────────────────
+# Credential management and authorization layer between AI agents and external
+# APIs. Agents never see credentials — Clawvisor injects them inside approved
+# task scopes. Source: https://github.com/clawvisor/clawvisor
+clawvisor_enabled: false
+clawvisor_repo: "https://github.com/clawvisor/clawvisor.git"
+# Pin to commit SHA for reproducible deploys — git tags can be force-pushed.
+# SHA below is HEAD of main as of 2026-03-13. To update:
+#   git ls-remote https://github.com/clawvisor/clawvisor refs/heads/main
+clawvisor_version: "399824714ac75e1138e3623e1f985f3356e61fbc"
+clawvisor_port: 25297
+clawvisor_postgres_version: "17-alpine"
+clawvisor_auth_mode: "magic_link"
+clawvisor_cpus: "1.0"
+clawvisor_memory: "512M"
+clawvisor_postgres_cpus: "0.5"
+clawvisor_postgres_memory: "256M"
+# clawvisor_vault_key, clawvisor_jwt_secret, clawvisor_db_password live in vault.yml
+# Optional Google OAuth (required for Google services):
+# clawvisor_google_client_id and clawvisor_google_client_secret also in vault.yml
+# Optional registration whitelist:
+# clawvisor_allowed_emails:
+#   - "admin@yourdomain.com"
+
+# ── ByteRover (AI Agent Memory Layer) ──────────────────────────────
+# Persistent knowledge management for AI agents. Stores project patterns,
+# decisions, and architectural rules in .brv/context-tree/ as Markdown.
+# Saves tokens by avoiding redundant context re-reads across sessions.
+# Source: https://www.byterover.dev
+# Skill: https://clawhub.ai/byteroverinc/byterover
+byterover_enabled: false
+byterover_cli_version: "2.0.0"
+byterover_provider: "byterover"  # default provider (free, no API key)
+# Optional: byterover_api_key (for cloud sync or custom provider) — lives in vault.yml
+# Optional: byterover_model (only when using a custom LLM provider)
+byterover_memory_flush_enabled: true
+byterover_memory_flush_token_threshold: 4000
+byterover_knowledge_mining_enabled: true
+byterover_knowledge_mining_cron_hour: 9
+byterover_knowledge_mining_cron_minute: 0
+
 # ── Channel ──────────────────────────────────────────────────────────
 telegram_enabled: true
 # telegram_bot_token lives in vault.yml

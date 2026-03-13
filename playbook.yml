@@ -315,6 +315,18 @@
             fail_msg: "github_token must be set in vault.yml when agent_orchestrator_enabled is true"
           when: agent_orchestrator_enabled | default(false) | bool
 
+        - name: Ensure Clawvisor secrets are set when Clawvisor is enabled
+          ansible.builtin.assert:
+            that:
+              - clawvisor_vault_key is defined and clawvisor_vault_key | length > 0
+              - clawvisor_jwt_secret is defined and clawvisor_jwt_secret | length > 0
+              - clawvisor_db_password is defined and clawvisor_db_password | length > 0
+            fail_msg: >
+              clawvisor_vault_key, clawvisor_jwt_secret, and clawvisor_db_password
+              must be set in vault.yml when clawvisor_enabled is true.
+              Generate with: openssl rand -base64 32 (vault key), openssl rand -hex 32 (others)
+          when: clawvisor_enabled | default(false) | bool
+
     - name: Verify secrets are set in vault
       tags: [always]
       block:
@@ -366,6 +378,12 @@
     - role: agent-orchestrator
       tags: [orchestrator]
       when: agent_orchestrator_enabled | default(false) | bool
+    - role: clawvisor
+      tags: [clawvisor]
+      when: clawvisor_enabled | default(false) | bool
+    - role: byterover
+      tags: [byterover]
+      when: byterover_enabled | default(false) | bool
     - role: openclaw-integrate
       tags: [integrate]
     - role: convenience

@@ -34,6 +34,21 @@ backup_encryption_key: ""
 # repo, issues, and pull-request permissions for target repositories.
 github_token: "ghp_your-token-here"
 
+# ── Clawvisor (API Gateway) ────────────────────────────────────────
+# Required when clawvisor_enabled: true
+# Generate vault key: openssl rand -base64 32
+# Generate JWT secret and DB password: openssl rand -hex 32
+# clawvisor_vault_key: ""
+# clawvisor_jwt_secret: ""
+# clawvisor_db_password: ""
+# Optional — Google OAuth for Google services (Gmail, Calendar, Drive):
+# clawvisor_google_client_id: ""
+# clawvisor_google_client_secret: ""
+
+# ── ByteRover (Agent Memory) ──────────────────────────────────────
+# Optional — only needed for cloud sync (brv push/pull) or custom providers.
+# byterover_api_key: ""
+
 # ── Channel Tokens ──────────────────────────────────────────────────
 telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
 

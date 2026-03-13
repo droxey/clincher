@@ -1,0 +1,215 @@
+---
+# Clawvisor: API gateway for AI agent authorization
+# Source: https://github.com/clawvisor/clawvisor
+# Runs as a separate Docker Compose stack, attached to openclaw-net for
+# webhook communication with the OpenClaw gateway.
+
+# ── Prerequisites ──────────────────────────────────────────────────────────
+
+- name: Verify OpenClaw container is running
+  ansible.builtin.command: docker inspect openclaw --format '{% raw %}{{ .State.Status }}{% endraw %}'
+  register: oc_state
+  changed_when: false
+  failed_when: oc_state.stdout != 'running'
+
+# ── Clone and Build ────────────────────────────────────────────────────────
+
+- name: Create Clawvisor directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ '0700' if 'secrets' in item else '0755' }}"
+  loop:
+    - "{{ clawvisor_install_dir }}"
+    - "{{ clawvisor_install_dir }}/secrets"
+
+- name: Clone Clawvisor repository
+  ansible.builtin.git:
+    repo: "{{ clawvisor_repo }}"
+    dest: "{{ clawvisor_install_dir }}/repo"
+    version: "{{ clawvisor_version }}"
+    depth: 1
+    force: true
+  register: cv_clone
+  retries: 3
+  delay: 10
+  until: cv_clone is not failed
+  notify: Rebuild Clawvisor
+
+# ── Secrets ────────────────────────────────────────────────────────────────
+
+- name: Generate PostgreSQL password for Clawvisor
+  ansible.builtin.copy:
+    content: "{{ clawvisor_db_password }}"
+    dest: "{{ clawvisor_install_dir }}/secrets/db_password"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Rebuild Clawvisor
+
+- name: Render Clawvisor environment file
+  ansible.builtin.template:
+    src: clawvisor.env.j2
+    dest: "{{ clawvisor_install_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Rebuild Clawvisor
+
+# ── Docker Compose ─────────────────────────────────────────────────────────
+
+- name: Render Clawvisor Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.clawvisor.yml.j2
+    dest: "{{ clawvisor_install_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Rebuild Clawvisor
+
+- name: Flush handlers to build before continuing
+  ansible.builtin.meta: flush_handlers
+
+- name: Start Clawvisor stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ clawvisor_install_dir }}"
+    state: present
+    build: policy
+  register: cv_compose
+
+- name: Wait for Clawvisor to become healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ clawvisor_port }}/ready"
+    method: GET
+    status_code: [200]
+  register: cv_health
+  retries: 12
+  delay: 10
+  until: cv_health is succeeded
+
+# ── Agent Registration ─────────────────────────────────────────────────────
+
+- name: Create OpenClaw agent in Clawvisor
+  ansible.builtin.command: >
+    docker exec clawvisor /app/clawvisor agent create openclaw
+    --with-callback-secret --replace --json
+  register: cv_agent_raw
+  changed_when: "'token' in cv_agent_raw.stdout"
+
+- name: Parse Clawvisor agent credentials
+  ansible.builtin.set_fact:
+    clawvisor_agent_token: "{{ (cv_agent_raw.stdout | from_json).token }}"
+    clawvisor_callback_secret: "{{ (cv_agent_raw.stdout | from_json).callback_secret }}"
+  no_log: true
+
+# ── Install Clawvisor Skill in OpenClaw ────────────────────────────────────
+
+- name: Install Clawvisor skill via clawhub
+  ansible.builtin.command: >
+    docker exec openclaw npx clawhub install clawvisor --force
+  register: cv_skill_install
+  changed_when: "'installed' in cv_skill_install.stdout | lower"
+
+- name: Verify Clawvisor skill installed
+  ansible.builtin.command: >
+    docker exec openclaw test -f /root/.openclaw/workspace/skills/clawvisor/SKILL.md
+  changed_when: false
+
+# ── Install Webhook Extension ──────────────────────────────────────────────
+
+- name: Copy webhook extension into OpenClaw container
+  ansible.builtin.command: >
+    docker cp {{ clawvisor_install_dir }}/repo/extensions/clawvisor-webhook
+    openclaw:/root/.openclaw/extensions/clawvisor-webhook
+  changed_when: false
+
+- name: Install webhook extension dependencies
+  ansible.builtin.command: >
+    docker exec -w /root/.openclaw/extensions/clawvisor-webhook
+    openclaw npm install --production
+  register: cv_ext_install
+  changed_when: "'added' in cv_ext_install.stdout | default('')"
+
+# ── Configure Webhook Plugin ──────────────────────────────────────────────
+
+- name: Enable clawvisor-webhook plugin in OpenClaw
+  ansible.builtin.command: >
+    docker exec openclaw openclaw config set
+    plugins.entries.clawvisor-webhook.enabled true
+  changed_when: false
+
+# ── Inject Clawvisor Environment into OpenClaw ─────────────────────────────
+# File-based secret passing — never CLI args (visible in process table).
+
+- name: Write Clawvisor env vars to host tempfile
+  ansible.builtin.copy:
+    content: |
+      CLAWVISOR_URL=http://clawvisor:{{ clawvisor_port }}
+      CLAWVISOR_AGENT_TOKEN={{ clawvisor_agent_token }}
+      CLAWVISOR_CALLBACK_SECRET={{ clawvisor_callback_secret }}
+      OPENCLAW_HOOKS_URL=http://openclaw:7681
+    dest: "{{ clawvisor_install_dir }}/secrets/.clawvisor-env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Copy Clawvisor env into OpenClaw container
+  ansible.builtin.command: >
+    docker cp {{ clawvisor_install_dir }}/secrets/.clawvisor-env
+    openclaw:/tmp/.clawvisor-env
+  changed_when: false
+  no_log: true
+
+- name: Append Clawvisor env to OpenClaw workspace .env
+  ansible.builtin.command: >
+    docker exec openclaw sh -c
+    'cat /tmp/.clawvisor-env >> /root/.openclaw/workspace/.env
+    && chmod 600 /root/.openclaw/workspace/.env
+    && rm -f /tmp/.clawvisor-env'
+  changed_when: false
+  no_log: true
+
+- name: Remove Clawvisor env tempfile from host
+  ansible.builtin.file:
+    path: "{{ clawvisor_install_dir }}/secrets/.clawvisor-env"
+    state: absent
+  no_log: true
+
+# ── Restart OpenClaw to Apply Plugin Config ────────────────────────────────
+
+- name: Restart OpenClaw gateway to load webhook plugin
+  ansible.builtin.command: >
+    docker exec openclaw openclaw gateway restart
+  changed_when: false
+
+- name: Wait for OpenClaw to stabilize after gateway restart
+  ansible.builtin.command: >
+    docker inspect openclaw
+    --format '{% raw %}{{ if .State.Health }}{{ .State.Health.Status }}{{ else }}running{{ end }}{% endraw %}'
+  register: cv_oc_health
+  until: cv_oc_health.stdout in ['healthy', 'running']
+  retries: 12
+  delay: 10
+  changed_when: false
+
+# ── Verification ───────────────────────────────────────────────────────────
+
+- name: Verify Clawvisor health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ clawvisor_port }}/ready"
+    method: GET
+    status_code: [200]
+
+- name: Show Clawvisor deployment summary
+  ansible.builtin.debug:
+    msg: |
+      Clawvisor deployed successfully.
+      Dashboard: http://127.0.0.1:{{ clawvisor_port }} (localhost only)
+      Auth mode: {{ clawvisor_auth_mode }}
+      Webhook extension: installed and enabled
+      Agent token: registered (stored in container .env)

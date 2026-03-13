@@ -1,0 +1,24 @@
+---
+# Clawvisor defaults
+# Override in group_vars/all/vars.yml or host_vars as needed.
+
+clawvisor_enabled: false
+clawvisor_repo: "https://github.com/clawvisor/clawvisor.git"
+# Pin to commit SHA for reproducible deploys — git tags can be force-pushed.
+# SHA below is HEAD of main as of 2026-03-13. To update:
+#   git ls-remote https://github.com/clawvisor/clawvisor refs/heads/main
+clawvisor_version: "399824714ac75e1138e3623e1f985f3356e61fbc"
+
+clawvisor_install_dir: "/opt/clawvisor"
+clawvisor_port: 25297
+clawvisor_postgres_version: "17-alpine"
+clawvisor_auth_mode: "magic_link"
+
+# Container resource limits
+clawvisor_cpus: "1.0"
+clawvisor_memory: "512M"
+clawvisor_postgres_cpus: "0.5"
+clawvisor_postgres_memory: "256M"
+
+# Google OAuth (optional — required for Google services)
+# clawvisor_google_client_id and clawvisor_google_client_secret live in vault.yml

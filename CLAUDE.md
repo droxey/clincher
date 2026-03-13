@@ -42,7 +42,8 @@ clincher/
 │   ├── humanizer.prompt.md
 │   ├── ansible-review.prompt.md
 │   ├── github-deployment-guide.prompt.md
-│   └── github-smallproject-virality.prompt.md
+│   ├── github-smallproject-virality.prompt.md
+│   └── byterover.prompt.md
 ├── .claude/commands/            # Claude Code slash commands (skill wrappers)
 ├── ansible.cfg / requirements.yml / playbook.yml / inventory/hosts.yml
 ├── group_vars/all/{vars.yml, vault.yml.example}
@@ -53,6 +54,8 @@ clincher/
     ├── openclaw-harden/         # Step 5: gateway/sandbox hardening
     ├── agency-agents/           # Step 5.1: prompt library (optional)
     ├── agent-orchestrator/      # Step 5.2: multi-agent orchestration (optional)
+    ├── clawvisor/               # Step 5.3: API gateway for agent authorization (optional)
+    ├── byterover/               # Step 5.4: persistent agent memory layer (optional)
     ├── openclaw-integrate/      # Steps 6-8: API, Telegram, memory
     ├── reverse-proxy/           # Step 9: Caddy/Tunnel/Tailscale
     ├── verify/                  # Step 10: post-deploy verification
@@ -123,10 +126,16 @@ Three bridge networks enforce least-privilege. `openclaw-net` is `internal: true
 | `litellm` | `ghcr.io/berriai/litellm:main-v1.81.3-stable` | LLM API proxy — routing, cost controls, caching | `openclaw-net` |
 | `openclaw-egress` | Built from [stripe/smokescreen](https://github.com/stripe/smokescreen) | Egress whitelist proxy for LLM API calls | `openclaw-net` + `egress-net` |
 | `redis` | `redis/redis-stack-server:7.4.0-v3` | Semantic cache (RediSearch module) | `openclaw-net` |
+| `clawvisor` | Built from [clawvisor/clawvisor](https://github.com/clawvisor/clawvisor) | API gateway — credential injection, task scopes, audit logging | `openclaw-net` |
+| `clawvisor-db` | `postgres:17-alpine` | Clawvisor PostgreSQL database | `openclaw-net` |
 
 Monitoring services (Prometheus, Grafana, Uptime Kuma) run on a **separate VPS** — deploy via `ansible-playbook caprover-playbook.yml`.
 
 **Agent Orchestrator** ([ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator)) runs as a host-level systemd service (not inside Docker). It manages parallel AI agents via the Docker runtime plugin, spawning each agent in its own container/worktree. Dashboard on `127.0.0.1:3000` (localhost only). Optional — controlled by `agent_orchestrator_enabled`.
+
+**Clawvisor** ([clawvisor/clawvisor](https://github.com/clawvisor/clawvisor)) runs as a separate Docker Compose stack on `openclaw-net`. Agents never see credentials — Clawvisor injects them inside approved task scopes. Connects to OpenClaw via webhook extension. Dashboard on `127.0.0.1:25297` (localhost only). Optional — controlled by `clawvisor_enabled`.
+
+**ByteRover** ([byteroverinc/byterover](https://clawhub.ai/byteroverinc/byterover)) is a ClawHub skill installed inside the OpenClaw container. CLI (`brv`) stores project knowledge in `.brv/context-tree/`. Memory flush curates insights before context window compaction; daily cron mines session patterns. Optional — controlled by `byterover_enabled`.
 
 ### Networks
 
