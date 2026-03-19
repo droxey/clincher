@@ -21,6 +21,15 @@
         proxy_net_subnet: "{{ _proxy_subnet_discovery.stdout }}"
       when: _proxy_subnet_discovery.rc == 0 and _proxy_subnet_discovery.stdout | length > 0
 
+- name: Fail if proxy-net subnet is unknown
+  ansible.builtin.fail:
+    msg: >
+      Cannot determine proxy-net subnet — the openclaw_proxy-net Docker network
+      does not exist yet. Run the deploy role first to create the Docker networks:
+        ansible-playbook playbook.yml --ask-vault-pass --tags deploy
+      Then re-run with --tags harden.
+  when: proxy_net_subnet is not defined or proxy_net_subnet | length == 0
+
 - name: Back up OpenClaw config before hardening
   ansible.builtin.command: >
     docker exec openclaw
@@ -87,7 +96,7 @@
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
     - { key: 'gateway.bind', value: '"0.0.0.0"' }
-    - { key: 'gateway.trustedProxies', value: "'[\"127.0.0.1\", \"{{ proxy_net_subnet | default(\"172.16.0.0/12\") }}\"]'" }
+    - { key: 'gateway.trustedProxies', value: "'[\"127.0.0.1\", \"{{ proxy_net_subnet }}\"]'" }
   changed_when: false
   check_mode: false
 
