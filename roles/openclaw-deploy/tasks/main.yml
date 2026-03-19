@@ -43,7 +43,7 @@
 - name: Wait for all containers to become healthy
   ansible.builtin.command: >
     docker inspect {{ item }}
-    --format '{{ '{{' }}if .State.Health{{ '}}' }}{{ '{{' }}.State.Health.Status{{ '}}' }}{{ '{{' }}else{{ '}}' }}running{{ '{{' }}end{{ '}}' }}'
+    --format '{{ docker_health_format }}'
   register: health_check
   until: health_check.stdout in ['healthy', 'running']
   retries: 36

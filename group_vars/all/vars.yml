@@ -4,6 +4,9 @@ deploy_user: deploy
 ssh_port: 9922
 admin_ip: "YOUR_STATIC_IP"
 openclaw_base_dir: /opt/openclaw
+# Go template format string for docker inspect health checks.
+# !unsafe prevents Ansible from interpreting the {{ }} as Jinja2.
+docker_health_format: !unsafe "{{if .State.Health}}{{.State.Health.Status}}{{else}}running{{end}}"
 domain: "openclaw.yourdomain.com"
 
 # SSH key for Ansible → server auth (auto-generated on first run if missing).

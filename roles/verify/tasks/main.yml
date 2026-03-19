@@ -12,7 +12,7 @@
   changed_when: false
 
 - name: Check all container health status
-  ansible.builtin.command: docker inspect {{ item }} --format '{{ '{{' }}if .State.Health{{ '}}' }}{{ '{{' }}.State.Health.Status{{ '}}' }}{{ '{{' }}else{{ '}}' }}running{{ '{{' }}end{{ '}}' }}'
+  ansible.builtin.command: docker inspect {{ item }} --format '{{ docker_health_format }}'
   register: container_health
   changed_when: false
   loop:

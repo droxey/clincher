@@ -231,7 +231,7 @@
 - name: Wait for OpenClaw to become healthy after hardening restart
   ansible.builtin.command: >
     docker inspect openclaw
-    --format '{{ '{{' }}if .State.Health{{ '}}' }}{{ '{{' }}.State.Health.Status{{ '}}' }}{{ '{{' }}else{{ '}}' }}running{{ '{{' }}end{{ '}}' }}'
+    --format '{{ docker_health_format }}'
   register: harden_health_check
   until: harden_health_check.stdout in ['healthy', 'running']
   retries: 18

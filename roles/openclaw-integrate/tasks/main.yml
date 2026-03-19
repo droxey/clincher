@@ -149,7 +149,7 @@
 - name: Wait for OpenClaw to become healthy after integration restart
   ansible.builtin.command: >
     docker inspect openclaw
-    --format '{{ '{{' }}if .State.Health{{ '}}' }}{{ '{{' }}.State.Health.Status{{ '}}' }}{{ '{{' }}else{{ '}}' }}running{{ '{{' }}end{{ '}}' }}'
+    --format '{{ docker_health_format }}'
   register: integrate_health_check
   until: integrate_health_check.stdout in ['healthy', 'running']
   retries: 18
