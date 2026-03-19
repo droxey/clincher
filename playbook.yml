@@ -22,7 +22,7 @@
   hosts: openclaw
   gather_facts: false
   become: true
-  tags: [base]
+  tags: [base, bootstrap]
   vars:
     ansible_user: root
 

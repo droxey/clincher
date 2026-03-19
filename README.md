@@ -40,6 +40,25 @@ One Ansible playbook handles everything — idempotently and safely re-runnable.
 
 ## Quick Start
 
+**One command on a fresh Ubuntu 24.04 VPS** — SSH in as root and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/droxey/clincher/main/bootstrap.sh | bash
+```
+
+The bootstrap script handles everything: installs Ansible, clones the repo, prompts for your API keys and domain, generates internal secrets, encrypts the vault, and runs the full playbook. You'll need your Anthropic API key, Voyage API key, and domain name ready.
+
+> **Want to inspect first?** Download, review, then run:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/droxey/clincher/main/bootstrap.sh -o bootstrap.sh
+> less bootstrap.sh
+> bash bootstrap.sh
+> ```
+
+<details>
+<summary><strong>Manual setup (from a separate control machine)</strong></summary>
+
 ```bash
 # 1. Clone and configure
 git clone https://github.com/droxey/clincher.git && cd clincher
@@ -53,19 +72,6 @@ $EDITOR inventory/hosts.yml              # set ansible_host to your VPS IP
 # 3. Deploy everything
 ansible-playbook playbook.yml -i inventory/hosts.yml --ask-vault-pass
 ```
-
-**That's it.** Firewall, egress proxy, socket isolation, sandbox hardening, channel integration, reverse proxy, monitoring, and backups — all configured and running.
-
-<details>
-<summary><strong>Alternative: one-command deploy from any machine</strong></summary>
-
-```bash
-# Pull and run the playbook directly — no manual clone needed
-ansible-pull -U https://github.com/droxey/clincher.git playbook.yml \
-  -i inventory/hosts.yml --ask-vault-pass
-```
-
-> Requires Ansible installed on the target server. The repository's `group_vars/all/vault.yml` must be configured before running.
 
 </details>
 
