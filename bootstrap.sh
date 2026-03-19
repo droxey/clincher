@@ -357,9 +357,15 @@ generate_config() {
       chmod 0600 "$VAULT_PASS_FILE"
     fi
 
-    # ── Write vault.yml ──
+    # ── Write vault.yml (plaintext) to a secure temporary file ──
     info "Writing vault.yml..."
-    cat > "group_vars/all/vault.yml" <<VAULT
+    local vault_dir="group_vars/all"
+    mkdir -p "$vault_dir"
+    local tmp_vault
+    tmp_vault=$(mktemp -p "$vault_dir" .vault.yml.XXXXXX)
+    chmod 0600 "$tmp_vault"
+
+    cat > "$tmp_vault" <<VAULT
 ---
 anthropic_api_key: "${ANTHROPIC_API_KEY}"
 voyage_api_key: "${VOYAGE_API_KEY}"
@@ -373,8 +379,10 @@ VAULT
 
     # ── Encrypt vault ──
     info "Encrypting vault.yml..."
-    ansible-vault encrypt "group_vars/all/vault.yml" \
-      --vault-password-file "$VAULT_PASS_FILE"
+    ansible-vault encrypt "$tmp_vault" \
+      --vault-password-file "$VAULT_PASS_FILE" \
+      --output "${vault_dir}/vault.yml"
+    rm -f "$tmp_vault"
   fi
 
   # ── Write inventory for local execution ──
