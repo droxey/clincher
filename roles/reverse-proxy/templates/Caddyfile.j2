@@ -1,4 +1,13 @@
 {{ domain }} {
+    # Security headers (OWASP recommendations)
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
 {% if monitoring_enabled | bool %}
     # Grafana dashboard (behind Grafana's own auth)
     handle_path /grafana/* {

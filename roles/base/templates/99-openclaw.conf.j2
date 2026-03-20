@@ -7,10 +7,62 @@ fs.inotify.max_user_instances = {{ inotify_max_instances }}
 
 # Allow more concurrent connections (reverse proxy + agent tool calls)
 net.core.somaxconn = {{ somaxconn }}
+
+# ── Kernel hardening (CIS Benchmark aligned) ────────────────────────
+# ASLR: full randomization for stack, VDSO, mmap, heap
+kernel.randomize_va_space = 2
+
+# Hide kernel pointers from non-root users
+kernel.kptr_restrict = 2
+
+# Restrict dmesg to root (prevents info leaks to unprivileged users)
+kernel.dmesg_restrict = 1
+
+# Restrict perf_event_open to root
+kernel.perf_event_paranoid = 3
+
+# Restrict ptrace to parent-child relationships only
+kernel.yama.ptrace_scope = 2
+
+# Disable unprivileged BPF (prevents container escape via eBPF)
+kernel.unprivileged_bpf_disabled = 1
+
+# ── Network hardening ───────────────────────────────────────────────
+# Reverse-path filtering — drop spoofed packets
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Reject ICMP redirects (MITM prevention)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Reject source-routed packets
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+
+# Log impossible packets for forensics
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+
+# Ignore broadcast ICMP (smurf attack prevention)
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
 {% if disable_ipv6 | bool %}
 
 # Disable IPv6 — reduces attack surface if not needed
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
+{% else %}
+
+# IPv6 hardening — reject redirects and source-routed packets
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
 {% endif %}

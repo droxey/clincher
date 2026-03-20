@@ -1,0 +1,9 @@
+{{ openclaw_base_dir }}/monitoring/logs/cron.log {
+    daily
+    rotate {{ log_retention_days }}
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}

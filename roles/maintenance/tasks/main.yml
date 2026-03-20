@@ -88,6 +88,15 @@
     job: "{{ openclaw_base_dir }}/monitoring/verify-backup.sh >> {{ openclaw_base_dir }}/monitoring/logs/cron.log 2>&1"
     user: root
 
+# ── Log Rotation ────────────────────────────────────────────────────
+- name: Deploy logrotate config for cron logs
+  ansible.builtin.template:
+    src: logrotate-openclaw.j2
+    dest: /etc/logrotate.d/openclaw
+    owner: root
+    group: root
+    mode: "0644"
+
 # ── Unattended Security Upgrades (§13.3) ─────────────────────────────
 - name: Install unattended-upgrades
   ansible.builtin.apt:

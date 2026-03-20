@@ -11,9 +11,15 @@ skip_list:
   # Role names use hyphens by convention in this project (e.g. openclaw-config)
   - role-name
 
+# Warn-only for rules that conflict with this playbook's docker exec pattern
+warn_list:
+  # docker exec commands are the only way to configure the openclaw container
+  - command-instead-of-module
+
 # Exclude paths that aren't part of the playbook
 exclude_paths:
   - .github/
+  - .claude/
   - molecule/
   - group_vars/all/vault.yml
 

@@ -297,6 +297,30 @@
           Tailscale is installed but not authenticated.
           SSH into the server and run: sudo tailscale up
 
+# ── Time Synchronization ────────────────────────────────────────────
+# Accurate time is critical for TLS cert validation and log correlation.
+# Ubuntu 24.04 ships with systemd-timesyncd enabled by default —
+# verify it is active and syncing.
+- name: Ensure systemd-timesyncd is running
+  ansible.builtin.systemd:
+    name: systemd-timesyncd
+    state: started
+    enabled: true
+
+- name: Verify time synchronization status
+  ansible.builtin.command: timedatectl show --property=NTPSynchronized --value
+  register: ntp_sync
+  changed_when: false
+  check_mode: false
+
+- name: Warn if NTP is not synchronized
+  ansible.builtin.debug:
+    msg: >
+      WARNING: NTP is not synchronized (NTPSynchronized={{ ntp_sync.stdout }}).
+      TLS certificate validation and log timestamps may be unreliable.
+      Check: timedatectl status / systemctl status systemd-timesyncd
+  when: ntp_sync.stdout != 'yes'
+
 # ── Disable IPv6 (Optional) ──────────────────────────────────────────
 - name: Disable IPv6 in UFW
   ansible.builtin.lineinfile:
