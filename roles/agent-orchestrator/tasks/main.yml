@@ -42,19 +42,21 @@
         filename: nodesource
         state: present
 
-- name: Install Node.js
+- name: Install Node.js (pinned to major version)
   ansible.builtin.apt:
-    name: nodejs
+    name: "nodejs={{ agent_orchestrator_node_version }}.*"
     state: present
     update_cache: true
 
 - name: Enable corepack (ships with Node.js — provides pnpm)
   ansible.builtin.command: corepack enable
-  changed_when: false
+  args:
+    creates: /usr/local/bin/pnpm
 
 - name: Prepare pnpm via corepack
   ansible.builtin.command: corepack prepare pnpm@{{ agent_orchestrator_pnpm_version }} --activate
-  changed_when: false
+  register: _corepack_prepare
+  changed_when: "'Preparing' in (_corepack_prepare.stderr | default(''))"
 
 - name: Check if GitHub CLI is already installed
   ansible.builtin.command: gh --version
@@ -167,14 +169,8 @@
 
 # ── Firewall: Dashboard on Localhost Only ───────────────────────────────────
 
-- name: Block external access to orchestrator dashboard port
-  community.general.ufw:
-    rule: deny
-    port: "{{ agent_orchestrator_port | string }}"
-    proto: tcp
-    direction: in
-    comment: "agent-orchestrator dashboard — localhost only"
-
+# Allow-before-deny: UFW evaluates rules in insertion order. The allow rule
+# must be inserted first so localhost traffic matches before the blanket deny.
 - name: Allow localhost access to orchestrator dashboard
   community.general.ufw:
     rule: allow
@@ -183,6 +179,14 @@
     from_ip: 127.0.0.1
     direction: in
     comment: "agent-orchestrator dashboard — localhost"
+
+- name: Block external access to orchestrator dashboard port
+  community.general.ufw:
+    rule: deny
+    port: "{{ agent_orchestrator_port | string }}"
+    proto: tcp
+    direction: in
+    comment: "agent-orchestrator dashboard — localhost only"
 
 # ── Verification ────────────────────────────────────────────────────────────
 

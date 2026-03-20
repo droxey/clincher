@@ -21,6 +21,7 @@
 # Guard: generate the keypair if the file doesn't exist yet (e.g., --tags base
 # run without bootstrap, or non-standard key path). lookup('file') hard-fails
 # if the path is missing, so we ensure it exists before calling it.
+# Duplicated in playbook.yml bootstrap play — both need independent guards.
 - name: Generate local SSH keypair if missing
   ansible.builtin.command:
     cmd: ssh-keygen -t ed25519 -f {{ local_ssh_key_path }} -N "" -C "deploy@clincher"
@@ -122,6 +123,7 @@
   register: compose_check
   changed_when: false
   check_mode: false
+  failed_when: "'v2' not in compose_check.stdout"
 
 # ── Docker Daemon Tuning ──────────────────────────────────────────────
 - name: Create /etc/docker directory

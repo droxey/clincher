@@ -43,12 +43,13 @@
 
 - name: Verify Redis connectivity
   ansible.builtin.command: >
-    docker exec openclaw-redis redis-cli
-    {{ '-a ' ~ redis_password ~ ' --no-auth-warning' if redis_password | default('') | length > 0 else '' }}
-    ping
+    docker exec
+    {{ '-e REDISCLI_AUTH=' ~ redis_password if redis_password | default('') | length > 0 else '' }}
+    openclaw-redis redis-cli ping
   register: redis_ping
   changed_when: false
   check_mode: false
+  no_log: "{{ redis_password | default('') | length > 0 }}"
 
 - name: Verify egress proxy — whitelisted domain
   ansible.builtin.command: >

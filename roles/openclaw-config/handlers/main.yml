@@ -9,6 +9,10 @@
   # when smokescreen_commit changes between runs.
   changed_when: _egress_build.rc == 0
 
+# Handlers below use `docker compose restart` (command) instead of
+# community.docker.docker_compose_v2 to gracefully handle partial runs where
+# the target service may not exist yet (e.g., --tags config without --tags deploy).
+# The custom failed_when logic suppresses "no such service/container" errors.
 - name: Probe egress
   ansible.builtin.command: docker compose ps -q openclaw-egress
   args:

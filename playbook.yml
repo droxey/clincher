@@ -123,6 +123,8 @@
     - name: Gather facts
       ansible.builtin.setup:
 
+    # Duplicated in roles/base/tasks/main.yml — both need independent guards for
+    # --tags base without bootstrap and bootstrap without base scenarios.
     - name: Ensure local SSH key exists
       ansible.builtin.command:
         cmd: ssh-keygen -t ed25519 -f {{ local_ssh_key_path }} -N "" -C "deploy@clincher"
