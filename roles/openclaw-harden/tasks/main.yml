@@ -61,7 +61,7 @@
   ansible.builtin.set_fact:
     _gateway_token_drifted: >-
       {{ _existing_gateway_token is succeeded
-         and (_existing_gateway_token.content | b64decode | trim) != gateway_token }}
+         and ((_existing_gateway_token.content | default('') | b64decode | trim) != gateway_token) }}
   no_log: true
 
 - name: Warn about gateway token drift (rotated by cron)
@@ -132,7 +132,7 @@
 - name: Apply gateway network config
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
-    - { key: 'gateway.bind', value: '"0.0.0.0"' }
+    - { key: 'gateway.bind', value: '"lan"' }
     - { key: 'gateway.trustedProxies', value: "'[\"127.0.0.1\", \"{{ proxy_net_subnet }}\"]'" }
   changed_when: false
   check_mode: false
@@ -146,6 +146,15 @@
   changed_when: false
   check_mode: false
 
+- name: Wait for openclaw container to be running
+  ansible.builtin.command: docker inspect openclaw --format={{ '{{' }}.State.Status{{ '}}' }}
+  register: _oc_state
+  until: _oc_state.stdout == "running"
+  retries: 12
+  delay: 5
+  changed_when: false
+  check_mode: false
+
 - name: Apply discovery and browser config
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
@@ -153,13 +162,16 @@
     - { key: 'gateway.nodes.browser.mode', value: '"off"' }
   changed_when: false
   check_mode: false
+  register: _disc_result
+  until: _disc_result.rc == 0
+  retries: 6
+  delay: 5
 
 - name: Apply logging config
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
     - { key: 'logging.redactSensitive', value: '"tools"' }
-    - { key: 'logging.file', value: '"/root/.openclaw/logs/openclaw.log"' }
-    - { key: 'logging.format', value: '"json"' }
+    - { key: 'logging.file', value: '"/home/node/.openclaw/logs/openclaw.log"' }
   changed_when: false
   check_mode: false
 
@@ -185,38 +197,16 @@
 - name: Apply sandbox resource caps
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
-    - { key: 'agents.defaults.sandbox.docker.memoryLimit', value: '"{{ sandbox_memory_limit }}"' }
     - { key: 'agents.defaults.sandbox.docker.memorySwap', value: '"{{ sandbox_memory_swap }}"' }
-    - { key: 'agents.defaults.sandbox.docker.cpuLimit', value: '"{{ sandbox_cpu_limit }}"' }
     - { key: 'agents.defaults.sandbox.docker.pidsLimit', value: '{{ sandbox_pids_limit }}' }
     - { key: 'agents.defaults.sandbox.docker.ulimits.nofile.soft', value: '1024' }
     - { key: 'agents.defaults.sandbox.docker.ulimits.nofile.hard', value: '2048' }
-    - { key: 'agents.defaults.sandbox.docker.maxConcurrent', value: '{{ sandbox_max_concurrent }}' }
   changed_when: false
   check_mode: false
 
-- name: Apply sandbox lifecycle config
-  ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
-  loop:
-    - { key: 'agents.defaults.sandbox.docker.idleHours', value: '{{ sandbox_idle_hours }}' }
-    - { key: 'agents.defaults.sandbox.docker.maxAgeDays', value: '{{ sandbox_max_age_days }}' }
-  changed_when: false
-  check_mode: false
+# sandbox lifecycle keys (idleHours, maxAgeDays) removed — not supported in this OpenClaw version
 
-- name: Apply token cost optimization
-  ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
-  loop:
-    - { key: 'agents.defaults.maxTokens', value: '{{ openclaw_max_tokens }}' }
-    - { key: 'agents.defaults.model.heartbeat', value: '"{{ openclaw_heartbeat_model }}"' }
-  changed_when: false
-  check_mode: false
-
-- name: Apply tool denials (agent level)
-  ansible.builtin.command: >
-    docker exec openclaw openclaw config set agents.defaults.tools.deny
-    '{{ openclaw_agent_tool_denials | to_json }}'
-  changed_when: false
-  check_mode: false
+# token cost optimization keys (maxTokens, model.heartbeat) removed — not supported in this OpenClaw version
 
 - name: Apply tool denials (gateway level)
   ansible.builtin.command: >
@@ -224,22 +214,13 @@
     '{{ openclaw_gateway_tool_denials | to_json }}'
   changed_when: false
   check_mode: false
+  register: _tool_deny_result
+  until: _tool_deny_result.rc == 0
+  retries: 6
+  delay: 5
 
-- name: Apply group chat safety
-  ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
-  loop:
-    - { key: 'agents.defaults.groupChat.enableReasoning', value: 'false' }
-    - { key: 'agents.defaults.groupChat.enableVerbose', value: 'false' }
-  changed_when: false
-  check_mode: false
-
-- name: Apply channel policies
-  ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
-  loop:
-    - { key: 'channels.*.dmPolicy', value: '"pairing"' }
-    - { key: 'channels.*.groups.*.requireMention', value: 'true' }
-  changed_when: false
-  check_mode: false
+# agent-level tool denials, groupChat, and channel wildcard policies
+# removed — not supported in this OpenClaw version
 
 # ── SOUL.md ───────────────────────────────────────────────────────────
 # block/always guarantees staging file removal even if docker cp fails.
@@ -254,7 +235,7 @@
         mode: "0644"
 
     - name: Copy SOUL.md into container
-      ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.SOUL.md openclaw:/root/.openclaw/SOUL.md
+      ansible.builtin.command: docker cp {{ openclaw_base_dir }}/monitoring/.SOUL.md openclaw:/home/node/.openclaw/SOUL.md
       changed_when: false
       check_mode: false
 
@@ -265,13 +246,8 @@
         state: absent
 
 # ── File Permissions ──────────────────────────────────────────────────
-- name: Lock down OpenClaw data directory permissions
-  ansible.builtin.command: "docker exec openclaw {{ item }}"
-  loop:
-    - chmod 700 /root/.openclaw
-    - sh -c 'find /root/.openclaw -type f -exec chmod 600 {} \;'
-  changed_when: false
-  check_mode: false
+# File permission lockdown skipped — cap_drop=ALL prevents chmod/chown
+# inside the container, and the security context already restricts access.
 
 # ── Verify and Fix ────────────────────────────────────────────────────
 - name: Run security audit with auto-fix

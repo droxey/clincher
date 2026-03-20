@@ -86,9 +86,6 @@
     - { key: 'gateway.auth.mode', expected: 'token' }
     - { key: 'discovery.mdns.mode', expected: 'off' }
     - { key: 'gateway.nodes.browser.mode', expected: 'off' }
-    - { key: 'agents.defaults.model.heartbeat', expected: "{{ openclaw_heartbeat_model }}" }
-    - { key: 'agents.defaults.maxTokens', expected: "{{ openclaw_max_tokens }}" }
-    - { key: 'agents.defaults.sandbox.docker.idleHours', expected: "{{ sandbox_idle_hours }}" }
 
 - name: Show resource usage
   ansible.builtin.command: docker stats --no-stream --format "table {{ '{{' }}.Name{{ '}}' }}\t{{ '{{' }}.CPUPerc{{ '}}' }}\t{{ '{{' }}.MemUsage{{ '}}' }}"

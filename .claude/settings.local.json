@@ -16,7 +16,18 @@
       "Bash(pip install:*)",
       "Bash(yamllint --version)",
       "Bash(ansible-lint --version)",
-      "Bash(make check:*)"
+      "Bash(make check:*)",
+      "Bash(grep -r \"openclaw_base_dir\" /Users/droxey/dev/repos/clincher/roles/*/tasks/main.yml)",
+      "Read(//Users/droxey/.claude/plans/**)",
+      "Bash(ansible --version)",
+      "Bash(brew install:*)",
+      "Bash(ansible-galaxy collection:*)",
+      "Bash(ansible-vault encrypt:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(./venv/bin/ansible-playbook playbook.yml --vault-password-file /tmp/.vault_pass --private-key ~/.ssh/clincher_ed25519)",
+      "Bash(ssh -i ~/.ssh/clincher_ed25519 -p 9922 deploy@38.49.214.92 \"apt-cache policy docker-buildx-plugin 2>/dev/null | head -20\")",
+      "Bash(ssh -i ~/.ssh/clincher_ed25519 -p 9922 deploy@38.49.214.92 \"apt-cache policy docker-ce docker-compose-plugin containerd.io 2>/dev/null | grep -E ''\\(docker-ce:|docker-compose|containerd|Candidate\\)''\")",
+      "Bash(ssh -i ~/.ssh/clincher_ed25519 -p 9922 deploy@38.49.214.92 \"apt-cache madison docker-ce containerd.io docker-compose-plugin 2>/dev/null | grep ''5:27\\\\|1.7.27\\\\|2.32.4''\")"
     ]
   },
   "outputStyle": "Explanatory"

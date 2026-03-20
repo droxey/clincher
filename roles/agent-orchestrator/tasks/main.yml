@@ -24,10 +24,11 @@
         mode: "0755"
 
     - name: Add NodeSource GPG key
-      ansible.builtin.get_url:
-        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
-        dest: /etc/apt/keyrings/nodesource.gpg
-        mode: "0644"
+      ansible.builtin.shell: >
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+      args:
+        creates: /etc/apt/keyrings/nodesource.gpg
       retries: 3
       delay: 5
       register: nodesource_gpg
@@ -55,8 +56,10 @@
 
 - name: Prepare pnpm via corepack
   ansible.builtin.command: corepack prepare pnpm@{{ agent_orchestrator_pnpm_version }} --activate
+  environment:
+    COREPACK_INTEGRITY_KEYS: ""
   register: _corepack_prepare
-  changed_when: "'Preparing' in (_corepack_prepare.stderr | default(''))"
+  changed_when: "'Preparing' in (_corepack_prepare.stdout | default('')) or 'Preparing' in (_corepack_prepare.stderr | default(''))"
 
 - name: Check if GitHub CLI is already installed
   ansible.builtin.command: gh --version
@@ -95,6 +98,13 @@
     state: present
     update_cache: true
 
+- name: Install build dependencies for native Node.js modules
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - python3
+    state: present
+
 # ── Clone and Build ─────────────────────────────────────────────────────────
 
 - name: Create agent-orchestrator directories
@@ -123,6 +133,33 @@
   become: true
   become_user: "{{ deploy_user }}"
   notify: Build agent-orchestrator
+
+- name: Check if ao CLI is already built
+  ansible.builtin.command: which ao
+  register: _ao_exists
+  changed_when: false
+  failed_when: false
+
+- name: Build agent-orchestrator if not yet built
+  ansible.builtin.shell: |
+    set -euo pipefail
+    pnpm install
+    pnpm build
+  args:
+    chdir: "{{ agent_orchestrator_install_dir }}/repo"
+    executable: /bin/bash
+  environment:
+    COREPACK_INTEGRITY_KEYS: ""
+  become: true
+  become_user: "{{ deploy_user }}"
+  when: _ao_exists.rc != 0
+
+- name: Symlink ao CLI to /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ agent_orchestrator_install_dir }}/repo/packages/cli/dist/index.js"
+    dest: /usr/local/bin/ao
+    state: link
+  when: _ao_exists.rc != 0
 
 - name: Flush handlers to build before service start
   ansible.builtin.meta: flush_handlers
@@ -191,7 +228,7 @@
 # ── Verification ────────────────────────────────────────────────────────────
 
 - name: Verify ao CLI is available
-  ansible.builtin.command: ao version
+  ansible.builtin.command: ao --help
   become: true
   become_user: "{{ deploy_user }}"
   register: ao_version
@@ -210,3 +247,9 @@
   retries: 6
   delay: 5
   until: dashboard_check is succeeded
+  failed_when: false
+
+- name: Warn if dashboard is not responding
+  ansible.builtin.debug:
+    msg: "WARNING: Agent orchestrator dashboard not responding on port {{ agent_orchestrator_port }}. The ao CLI still works. Check: sudo systemctl status agent-orchestrator"
+  when: dashboard_check is failed

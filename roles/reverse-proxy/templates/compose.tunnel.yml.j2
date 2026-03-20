@@ -6,11 +6,13 @@ services:
     environment:
       TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
     networks:
-      - ingress-net
       - proxy-net
+      - egress-net
     read_only: true
     cap_drop:
       - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -19,6 +21,6 @@ networks:
   proxy-net:
     external: true
     name: openclaw_proxy-net
-  ingress-net:
+  egress-net:
     external: true
-    name: openclaw_ingress-net
+    name: openclaw_egress-net

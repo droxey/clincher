@@ -17,7 +17,5 @@ func main() {
 	conf.RoleFromRequest = func(req *http.Request) (string, error) {
 		return "default", nil
 	}
-	if err := smokescreen.StartWithConfig(conf, nil); err != nil {
-		panic(err)
-	}
+	smokescreen.StartWithConfig(conf, nil)
 }

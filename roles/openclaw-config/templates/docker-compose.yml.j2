@@ -84,7 +84,7 @@ services:
       litellm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "openclaw", "doctor", "--quiet"]
+      test: ["CMD", "openclaw", "doctor", "--non-interactive"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -130,7 +130,7 @@ services:
       openclaw-egress:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\" || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

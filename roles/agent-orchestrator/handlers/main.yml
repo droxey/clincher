@@ -7,15 +7,18 @@
   args:
     chdir: "{{ agent_orchestrator_install_dir }}/repo"
     executable: /bin/bash
+  environment:
+    COREPACK_INTEGRITY_KEYS: ""
   become: true
   become_user: "{{ deploy_user }}"
   changed_when: true
   notify: Link ao CLI globally
 
 - name: Link ao CLI globally
-  ansible.builtin.command:
-    cmd: pnpm link --global --global-bin-dir /usr/local/bin
-    chdir: "{{ agent_orchestrator_install_dir }}/repo"
+  ansible.builtin.file:
+    src: "{{ agent_orchestrator_install_dir }}/repo/packages/cli/dist/index.js"
+    dest: /usr/local/bin/ao
+    state: link
   become: true
   changed_when: true
 

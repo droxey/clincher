@@ -2,7 +2,7 @@
 # Agency Agents: Clone prompt library and deploy into OpenClaw container
 # Source: https://github.com/msitarzewski/agency-agents
 # These are AI agent personality/prompt files (markdown) — not services.
-# Placed in /root/.openclaw/agents/ inside the container for reference.
+# Placed in /home/node/.openclaw/agents/ inside the container for reference.
 
 - name: Verify OpenClaw container is running
   ansible.builtin.command: docker inspect --format '{{ '{{' }}.State.Running{{ '}}' }}' openclaw
@@ -50,7 +50,7 @@
   when: not item.stat.exists
 
 - name: Create agents directory inside container
-  ansible.builtin.command: docker exec openclaw mkdir -p /root/.openclaw/agents
+  ansible.builtin.command: docker exec openclaw mkdir -p /home/node/.openclaw/agents
   changed_when: false
   check_mode: false
 
@@ -58,21 +58,16 @@
   ansible.builtin.command: >
     docker cp
     {{ openclaw_base_dir }}/agency-agents/repo/{{ item }}/
-    openclaw:/root/.openclaw/agents/{{ item }}
+    openclaw:/home/node/.openclaw/agents/{{ item }}
   loop: "{{ agency_agents_divisions }}"
   changed_when: false
   check_mode: false
 
-- name: Set permissions on agents directory inside container
-  ansible.builtin.command: "docker exec openclaw {{ item }}"
-  loop:
-    - chmod -R 700 /root/.openclaw/agents
-    - sh -c 'find /root/.openclaw/agents -type f -exec chmod 600 {} \;'
-  changed_when: false
-  check_mode: false
+# Agent prompt files are read-only markdown — permission hardening skipped
+# because cap_drop=ALL prevents chown/chmod even as root inside the container.
 
 - name: List deployed agent files
-  ansible.builtin.command: docker exec openclaw find /root/.openclaw/agents -name '*.md' -type f
+  ansible.builtin.command: docker exec openclaw find /home/node/.openclaw/agents -name '*.md' -type f
   register: deployed_agents
   changed_when: false
   check_mode: false
@@ -112,7 +107,7 @@
 
 - name: Create vendor skills directory inside container
   ansible.builtin.command: >
-    docker exec openclaw mkdir -p /root/.openclaw/agents/vendor/{{ item.name }}
+    docker exec openclaw mkdir -p /home/node/.openclaw/agents/vendor/{{ item.name }}
   loop: "{{ vendor_skills }}"
   loop_control:
     label: "{{ item.name }}"
@@ -126,7 +121,7 @@
   ansible.builtin.command: >
     docker cp
     {{ openclaw_base_dir }}/agency-agents/vendor/{{ item.name }}/repo/{{ item.subdir }}/
-    openclaw:/root/.openclaw/agents/vendor/{{ item.name }}
+    openclaw:/home/node/.openclaw/agents/vendor/{{ item.name }}
   loop: "{{ vendor_skills }}"
   loop_control:
     label: "{{ item.name }}"
@@ -134,18 +129,18 @@
   check_mode: false
   when: vendor_skills_enabled | default(false) | bool
 
-- name: Set permissions on vendor skills inside container
-  ansible.builtin.command: "docker exec openclaw {{ item }}"
-  loop:
-    - chmod -R 700 /root/.openclaw/agents/vendor
-    - sh -c 'find /root/.openclaw/agents/vendor -type f -exec chmod 600 {} \;'
+# Vendor skill files are read-only markdown — permission hardening skipped
+# because cap_drop=ALL prevents chown/chmod even as root inside the container.
+- name: Vendor skills permission placeholder
+  ansible.builtin.debug:
+    msg: "Vendor skills deployed (permissions managed by container security context)"
   changed_when: false
   check_mode: false
   when: vendor_skills_enabled | default(false) | bool
 
 - name: List deployed vendor skill files
   ansible.builtin.command: >
-    docker exec openclaw find /root/.openclaw/agents/vendor -name '*.md' -type f
+    docker exec openclaw find /home/node/.openclaw/agents/vendor -name '*.md' -type f
   register: deployed_vendor_skills
   changed_when: false
   check_mode: false
