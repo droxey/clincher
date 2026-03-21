@@ -282,7 +282,7 @@ auto_reboot_time: "05:00"
 # Shell aliases (oc-status, oc-logs, oc-backup, etc.) in /etc/profile.d/
 convenience_aliases: true
 # Web-based file manager at https://<domain>/files/
-filebrowser_enabled: false
+filebrowser_enabled: true
 filebrowser_version: "v2.32.0"
 filebrowser_cpus: "0.5"
 filebrowser_memory: "64M"
