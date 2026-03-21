@@ -50,6 +50,9 @@ bootstrap:                     ## Run bootstrap script (pass ARGS="--config depl
 setup:                         ## Install pre-commit hooks (run once after clone)
 	pip install pre-commit && pre-commit install
 
+audit:
+	claude -p "Run a full audit: 1) yamllint on all .yml files 2) check for hardcoded secrets 3) verify molecule scenarios exist for all roles. Output results as a markdown table." --allowedTools "Bash,Read,Glob,Grep"
+
 help:                          ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
