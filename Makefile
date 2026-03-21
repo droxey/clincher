@@ -30,10 +30,10 @@ caprover-bootstrap:            ## Distribute SSH keys to fresh CapRover servers 
 	bash scripts/caprover-bootstrap-keys.sh
 
 caprover-deploy:               ## Deploy CapRover monitoring swarm (3 nodes)
-	ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml --ask-vault-pass
+	ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml -e @group_vars/caprover/vars.deploy.yml --ask-vault-pass
 
 caprover-verify:               ## Verify CapRover swarm deployment
-	ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml --tags verify --ask-vault-pass
+	ansible-playbook caprover-playbook.yml -i inventory/caprover-hosts.yml -e @group_vars/caprover/vars.deploy.yml --tags verify --ask-vault-pass
 
 caprover-check:                ## Lint + test CapRover monitoring config only
 	yamllint caprover-playbook.yml && ansible-lint caprover-playbook.yml && ansible-playbook caprover-playbook.yml --syntax-check && molecule test -s caprover

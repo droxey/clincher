@@ -105,10 +105,26 @@
 - name: Harden CapRover nodes
   hosts: caprover
   become: true
+  gather_facts: false
   any_errors_fatal: true
   tags: [base]
 
   pre_tasks:
+    - name: Detect live SSH port (handles fresh servers still on port 22)
+      ansible.builtin.wait_for_connection:
+        timeout: 5
+      register: port_check
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Fall back to port 22 if hardened port not yet active
+      ansible.builtin.set_fact:
+        ansible_port: 22
+      when: port_check is failed or port_check is unreachable
+
+    - name: Gather facts after port detection
+      ansible.builtin.setup:
+
     - name: Validate required variables
       ansible.builtin.assert:
         that:
@@ -124,6 +140,11 @@
 
   roles:
     - role: caprover-base
+
+  post_tasks:
+    - name: Switch to hardened SSH port for subsequent plays
+      ansible.builtin.set_fact:
+        ansible_port: "{{ caprover_ssh_port }}"
 
 # ═════════════════════════════════════════════════════════════════════
 # Phase 2: CapRover Swarm — Leader init + worker join

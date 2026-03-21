@@ -122,6 +122,23 @@
     - caprover_captain_password != caprover_initial_password
   tags: [swarm]
   block:
+    - name: Login with initial password for password change
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/v2/login"
+        method: POST
+        body_format: json
+        body:
+          password: "{{ caprover_initial_password }}"
+        status_code: [200, 401]
+      register: initial_login
+      no_log: true
+
+    - name: Store initial auth token
+      ansible.builtin.set_fact:
+        caprover_initial_token: "{{ initial_login.json.data.token | default('') }}"
+      when: initial_login.status == 200
+      no_log: true
+
     - name: Change captain password via API
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:3000/api/v2/user/changepassword"
@@ -131,8 +148,11 @@
           oldPassword: "{{ caprover_initial_password }}"
           newPassword: "{{ caprover_captain_password }}"
         headers:
-          x-captain-password: "{{ caprover_initial_password }}"
+          x-captain-auth: "{{ caprover_initial_token }}"
         status_code: [200, 400]
+      when:
+        - initial_login.status == 200
+        - caprover_initial_token | default('') | length > 0
       register: password_change
       no_log: true
 
@@ -224,12 +244,11 @@
   block:
     - name: Get current cluster nodes
       ansible.builtin.uri:
-        url: "https://captain.{{ caprover_root_domain }}/api/v2/user/system/nodes"
+        url: "http://{{ ansible_host }}:3000/api/v2/user/system/nodes"
         method: GET
         headers:
           x-captain-auth: "{{ caprover_auth_token }}"
         status_code: 200
-        validate_certs: false
       register: cluster_nodes
       retries: 3
       delay: 5
