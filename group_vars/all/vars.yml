@@ -67,7 +67,6 @@ egress_allowed_domains:
   - "*.anthropic.com"
   - "*.openai.com"
   - "*.voyageai.com"
-# Uncomment to add more LLM providers:
 egress_extra_domains:
   - "*.groq.com"
   - "*.googleapis.com"
@@ -165,7 +164,7 @@ agency_agents_repo: "https://github.com/msitarzewski/agency-agents.git"
 # Pin to commit SHA for reproducible deploys — git tags can be force-pushed.
 # SHA below is the HEAD of main as of 2026-03-08. To update:
 #   git ls-remote https://github.com/msitarzewski/agency-agents refs/heads/main
-agency_agents_version: "512f3773d187263e5235c475a82aaae829af82ba"
+agency_agents_version: "6254154899f510eb4a4de10561fecfc1f32ff17f"
 # Which agent divisions to install (all 9 available):
 agency_agents_divisions:
   - engineering
@@ -197,13 +196,13 @@ vendor_skills:
     repo: "https://github.com/vercel-labs/agent-skills.git"
     # SHA is HEAD of main as of 2026-03-06. To update:
     #   git ls-remote https://github.com/vercel-labs/agent-skills refs/heads/main
-    version: "64bee5b7ea30702448e2aed774eb361914029944"
+    version: "9aec8ee6aaf702e49312a071e672f1c1b7b7e948"
     subdir: "skills"
   - name: stripe
     repo: "https://github.com/stripe/ai.git"
     # SHA is HEAD of main as of 2026-03-05. To update:
     #   git ls-remote https://github.com/stripe/ai refs/heads/main
-    version: "be309fff3ba77aa47d0a6b96fd4ca24b6a4d0501"
+    version: "91f8471adfe5189145aaab61879bfa13452c51eb"
     subdir: "skills"
   - name: cloudflare
     repo: "https://github.com/cloudflare/skills.git"
@@ -215,13 +214,13 @@ vendor_skills:
     repo: "https://github.com/hashicorp/agent-skills.git"
     # SHA is HEAD of main as of 2026-03-04. To update:
     #   git ls-remote https://github.com/hashicorp/agent-skills refs/heads/main
-    version: "876a095c71079e4c112fb1de2f1a66dca0ffea23"
+    version: "9f2ede91f6eb72780c5fd787b3b1720623626dfb"
     subdir: "terraform"
   - name: google-workspace
     repo: "https://github.com/googleworkspace/cli.git"
     # SHA is HEAD of main as of 2026-03-09. To update:
     #   git ls-remote https://github.com/googleworkspace/cli refs/heads/main
-    version: "643fb7a9514e1f8e4d6ea94de81793638f6dc2df"
+    version: "e9970db26fb32ca97f11ce0d8c7c53e4eedd81cc"
     subdir: "skills"
 
 # ── Agent Orchestrator (Multi-Agent Coordination) ──────────────────────
@@ -233,7 +232,7 @@ agent_orchestrator_repo: "https://github.com/ComposioHQ/agent-orchestrator.git"
 # Pin to commit SHA for reproducible deploys — git tags can be force-pushed.
 # SHA below is HEAD of main as of 2026-03-10. To update:
 #   git ls-remote https://github.com/ComposioHQ/agent-orchestrator refs/heads/main
-agent_orchestrator_version: "240d6423fb0e3efb4d423b0f118871c438eedf6c"
+agent_orchestrator_version: "feb691e0b756c47e1bd7f14c9a0c8cb606d9a7f3"
 agent_orchestrator_pnpm_version: "10.6.5"
 agent_orchestrator_port: 3000
 agent_orchestrator_runtime: "docker"
