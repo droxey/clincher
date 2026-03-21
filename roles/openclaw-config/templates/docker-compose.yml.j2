@@ -58,6 +58,11 @@ services:
       HTTP_PROXY: http://openclaw-egress:4750
       HTTPS_PROXY: http://openclaw-egress:4750
       NO_PROXY: openclaw-docker-proxy,openclaw-litellm,localhost,127.0.0.1
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      VOYAGE_API_KEY: "${VOYAGE_API_KEY}"
+{% if openai_api_key is defined %}
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+{% endif %}
       OPENCLAW_DISABLE_BONJOUR: "1"
       NODE_OPTIONS: "--dns-result-order=ipv4first"
 {% if openclaw_extra_env is defined %}
