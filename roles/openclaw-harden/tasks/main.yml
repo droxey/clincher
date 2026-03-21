@@ -129,6 +129,12 @@
       no_log: true
 
 # ── Apply all hardening config ────────────────────────────────────────
+- name: Set gateway mode to local
+  ansible.builtin.command: >
+    docker exec openclaw openclaw config set gateway.mode local
+  changed_when: false
+  check_mode: false
+
 - name: Apply gateway network config
   ansible.builtin.command: "docker exec openclaw openclaw config set {{ item.key }} {{ item.value }}"
   loop:
