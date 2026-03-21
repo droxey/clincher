@@ -74,6 +74,7 @@ egress_extra_domains:
 
 # ── LiteLLM ──────────────────────────────────────────────────────────
 litellm_models:
+  # ── Anthropic (Claude) ──────────────────────────────────────────────
   - name: "anthropic/claude-opus-4-6"
     model: "claude-opus-4-6"
     key_env: "ANTHROPIC_API_KEY"
@@ -89,6 +90,70 @@ litellm_models:
     key_env: "ANTHROPIC_API_KEY"
     max_budget: 20.0
     rpm: 300
+  # ── OpenAI ──────────────────────────────────────────────────────────
+  - name: "openai/gpt-5.4"
+    model: "gpt-5.4"
+    key_env: "OPENAI_API_KEY"
+    max_budget: 80.0
+    rpm: 60
+  - name: "openai/gpt-5.4-mini"
+    model: "gpt-5.4-mini"
+    key_env: "OPENAI_API_KEY"
+    max_budget: 20.0
+    rpm: 200
+  - name: "openai/gpt-4.1"
+    model: "gpt-4.1"
+    key_env: "OPENAI_API_KEY"
+    max_budget: 50.0
+    rpm: 120
+  - name: "openai/o3-mini"
+    model: "o3-mini"
+    key_env: "OPENAI_API_KEY"
+    max_budget: 30.0
+    rpm: 100
+  # ── Groq (ultra-fast inference) ─────────────────────────────────────
+  - name: "groq/llama-3.3-70b-versatile"
+    model: "groq/llama-3.3-70b-versatile"
+    key_env: "GROQ_API_KEY"
+    max_budget: 10.0
+    rpm: 30
+  - name: "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+    model: "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+    key_env: "GROQ_API_KEY"
+    max_budget: 10.0
+    rpm: 30
+  - name: "groq/llama-3.1-8b-instant"
+    model: "groq/llama-3.1-8b-instant"
+    key_env: "GROQ_API_KEY"
+    max_budget: 5.0
+    rpm: 60
+  # ── xAI (Grok) ─────────────────────────────────────────────────────
+  - name: "xai/grok-4"
+    model: "xai/grok-4"
+    key_env: "XAI_API_KEY"
+    max_budget: 80.0
+    rpm: 60
+  - name: "xai/grok-3"
+    model: "xai/grok-3"
+    key_env: "XAI_API_KEY"
+    max_budget: 50.0
+    rpm: 60
+  - name: "xai/grok-3-mini"
+    model: "xai/grok-3-mini"
+    key_env: "XAI_API_KEY"
+    max_budget: 20.0
+    rpm: 120
+  # ── Google Gemini ───────────────────────────────────────────────────
+  - name: "gemini/gemini-2.5-pro"
+    model: "gemini/gemini-2.5-pro"
+    key_env: "GEMINI_API_KEY"
+    max_budget: 50.0
+    rpm: 60
+  - name: "gemini/gemini-2.5-flash"
+    model: "gemini/gemini-2.5-flash"
+    key_env: "GEMINI_API_KEY"
+    max_budget: 20.0
+    rpm: 120
 
 litellm_cache_ttl: 3600
 litellm_similarity_threshold: 0.8
@@ -258,9 +323,9 @@ reverse_proxy: "tunnel"
 # separate VPS — never on the OpenClaw host. Deploy the external
 # stack with: ansible-playbook caprover-playbook.yml
 # See §13.2.1 in README.md for setup details.
-external_monitoring_prometheus_url: "https://prometheus.dev.bots.ac"
-external_monitoring_grafana_url: "https://grafana.dev.bots.ac"
-external_monitoring_uptimekuma_url: "https://uptime.dev.bots.ac"
+external_monitoring_prometheus_url: "https://logs.bots.ac"
+external_monitoring_grafana_url: "https://stats.bots.ac"
+external_monitoring_uptimekuma_url: "https://uptime.bots.ac"
 
 # ── Maintenance ──────────────────────────────────────────────────────
 backup_retention_days: 14

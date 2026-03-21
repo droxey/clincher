@@ -4,10 +4,15 @@
 # These values are sensitive — never commit vault.yml unencrypted.
 # ALL secrets below MUST be filled before running the playbook.
 
-# ── LLM Provider API Keys (required) ────────────────────────────────
+# ── LLM Provider API Keys ──────────────────────────────────────────
+# Required:
 anthropic_api_key: "sk-ant-your-key-here"
 voyage_api_key: "pa-your-key-here"
-# openai_api_key: "sk-your-key-here"
+# Optional (uncomment and fill to enable each provider):
+# openai_api_key: "sk-proj-your-key-here"
+# groq_api_key: "gsk_your-key-here"
+# xai_api_key: "xai-your-key-here"
+# gemini_api_key: "AIza-your-key-here"
 
 # ── Optional OpenClaw Runtime Env (for Clawtomaton, etc.) ───────────
 # Set only the variables you actually need; each one is exposed to the

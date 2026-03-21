@@ -38,9 +38,13 @@
     redis_maxmemory: "256mb"
     redis_password: ""
 
-    # Secrets
+    # Secrets (test keys for template rendering)
     anthropic_api_key: "sk-ant-test-key-000000000000"
     voyage_api_key: "pa-test-key-000000000000"
+    openai_api_key: "sk-test-openai-key-000000000000"
+    groq_api_key: "gsk_test-groq-key-000000000000"
+    xai_api_key: "xai-test-xai-key-000000000000"
+    gemini_api_key: "AIzaTest-gemini-key-000000000000"
 
     # Container resource limits
     openclaw_cpus: "8.0"
