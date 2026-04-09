@@ -55,6 +55,7 @@ clincher/
 │   ├── ansible-review.prompt.md
 │   ├── github-deployment-guide.prompt.md
 │   └── github-smallproject-virality.prompt.md
+├── .agents/skills/gstack/       # Agent-agnostic skills (browse, QA, review, ship, retro)
 ├── .claude/commands/            # Claude Code slash commands (skill wrappers)
 ├── ansible.cfg / requirements.yml / playbook.yml / inventory/hosts.yml
 ├── group_vars/all/{vars.yml, vault.yml.example}
@@ -309,7 +310,7 @@ Never modify ansible.cfg vault-related settings or remove/change vault password 
 ## Environment Constraints
 This environment runs in a sandbox. Do not attempt sudo commands or write to ~/.config -- write config files to the project directory instead. If a command needs sudo, output it for the user to run manually.
 
-## Environment Constraints
+## Python Environment
 Python tools (ansible, molecule, etc.) are in a virtualenv. Always activate the venv before running ansible or molecule commands.
 
 ## Interaction Style section
