@@ -26,7 +26,7 @@ Import logged-in sessions from your real Chromium browser into the headless brow
 ### 1. Find the browse binary
 
 ```bash
-B=$(browse/bin/find-browse 2>/dev/null || ~/.Codex/skills/gstack/browse/bin/find-browse 2>/dev/null)
+B=$(browse/bin/find-browse 2>/dev/null || ~/.claude/skills/gstack/browse/bin/find-browse 2>/dev/null)
 if [ -n "$B" ]; then
   echo "READY: $B"
 else

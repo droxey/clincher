@@ -21,7 +21,7 @@ Auto-shuts down after 30 min idle. State persists between calls (cookies, tabs, 
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-B=$(browse/bin/find-browse 2>/dev/null || ~/.Codex/skills/gstack/browse/bin/find-browse 2>/dev/null)
+B=$(browse/bin/find-browse 2>/dev/null || ~/.claude/skills/gstack/browse/bin/find-browse 2>/dev/null)
 if [ -n "$B" ]; then
   echo "READY: $B"
 else
@@ -46,7 +46,7 @@ If `NEEDS_SETUP`:
 ### Test a user flow (login, signup, checkout, etc.)
 
 ```bash
-B=~/.Codex/skills/gstack/browse/dist/browse
+B=~/.claude/skills/gstack/browse/dist/browse
 
 # 1. Go to the page
 $B goto https://app.example.com/login

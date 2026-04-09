@@ -145,7 +145,7 @@ If multiple suites need to run, run them sequentially (each needs a test lane). 
 
 Review the diff for structural issues that tests don't catch.
 
-1. Read `.Codex/skills/review/checklist.md`. If the file cannot be read, **STOP** and report the error.
+1. Read `.claude/skills/review/checklist.md`. If the file cannot be read, **STOP** and report the error.
 
 2. Run `git diff origin/main` to get the full diff (scoped to feature changes against the freshly-fetched remote main).
 
@@ -243,7 +243,7 @@ Save the review output — it goes into the PR body in Step 8.
 git commit -m "$(cat <<'EOF'
 chore: bump version and changelog (vX.Y.Z.W)
 
-Co-Authored-By: Codex Opus 4.6 <noreply@anthropic.com>
+Co-Authored-By: <AI Assistant> <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -279,7 +279,7 @@ gh pr create --title "<type>: <summary>" --body "$(cat <<'EOF'
 - [x] All Rails tests pass (N runs, 0 failures)
 - [x] All Vitest tests pass (N tests)
 
-🤖 Generated with [Codex](https://Codex.com/Codex)
+🤖 Generated with AI assistance
 EOF
 )"
 ```

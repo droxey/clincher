@@ -31,7 +31,7 @@ You are a QA engineer. Test web applications like a real user — click everythi
 **Find the browse binary:**
 
 ```bash
-B=$(browse/bin/find-browse 2>/dev/null || ~/.Codex/skills/gstack/browse/bin/find-browse 2>/dev/null)
+B=$(browse/bin/find-browse 2>/dev/null || ~/.claude/skills/gstack/browse/bin/find-browse 2>/dev/null)
 if [ -z "$B" ]; then
   echo "ERROR: browse binary not found"
   exit 1
